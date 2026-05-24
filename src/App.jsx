@@ -67,8 +67,9 @@ function blockPos(course) {
   const s = parseTime(course.start), e = parseTime(course.end);
   if (!s || !e) return null;
   return {
-    left: `${((s - HOUR_START) / TOTAL_HOURS) * 100}%`,
-    width: `${((e - s) / TOTAL_HOURS) * 100}%`,
+    leftPct: ((s - HOUR_START) / TOTAL_HOURS) * 100,
+    widthPct: ((e - s) / TOTAL_HOURS) * 100,
+    durationH: e - s,
   };
 }
 
@@ -95,19 +96,100 @@ function CreditBar({ current, max }) {
   );
 }
 
-// ── Grid — ใส่ ref สำหรับ export, แสดง conflict แดง ────
+// ── GridBlock ─────────────────────────────────────────────
+function GridBlock({ course, isConflicting, pal, pos, onRemove }) {
+  const dh = pos.durationH;
+  const showName       = dh >= 1.5;
+  const showInstructor = dh >= 2.0;
+  const showRoom       = dh >= 2.0 && course.room;
+
+  const tooltip = [
+    `${course.code} หมู่ ${course.sec}`,
+    course.name,
+    course.instructor !== "-" ? `👤 ${course.instructor}` : "",
+    course.room ? `🏫 ห้อง ${course.room}` : "",
+    `⏱ ${course.start}–${course.end}`,
+    isConflicting ? "⚠ เวลาชนกัน!" : "",
+  ].filter(Boolean).join("\n");
+
+  return (
+    <div
+      onClick={() => onRemove(course)}
+      title={tooltip}
+      style={{
+        position: "absolute",
+        top: 3, bottom: 3,
+        left: `${pos.leftPct}%`,
+        width: `${pos.widthPct}%`,
+        borderRadius: 5,
+        padding: "2px 5px",
+        background: isConflicting ? P.conflict : pal.bg,
+        border: `1.5px solid ${isConflicting ? P.conflictBorder : pal.border}`,
+        color: isConflicting ? P.conflictBorder : pal.text,
+        fontSize: 9,
+        fontWeight: 700,
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        overflow: "hidden",
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+        lineHeight: 1.25,
+        transition: "opacity .1s",
+        boxSizing: "border-box",
+      }}
+      onMouseEnter={e => e.currentTarget.style.opacity = "0.75"}
+      onMouseLeave={e => e.currentTarget.style.opacity = "1"}
+    >
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 2 }}>
+        {isConflicting && <span style={{ flexShrink: 0 }}>⚠</span>}
+        <span style={{ fontFamily: "monospace", fontWeight: 800, fontSize: 9 }}>{course.code}</span>
+        <span style={{ opacity: 0.6, fontSize: 8, flexShrink: 0 }}>#{course.sec}</span>
+      </span>
+      {showName && (
+        <span className="grid-secondary" style={{
+          overflow: "hidden", textOverflow: "ellipsis",
+          fontWeight: 500, fontSize: 8, opacity: 0.85,
+        }}>
+          {course.name}
+        </span>
+      )}
+      {showInstructor && course.instructor !== "-" && (
+        <span className="grid-secondary" style={{
+          overflow: "hidden", textOverflow: "ellipsis",
+          fontSize: 8, opacity: 0.7,
+        }}>
+          {course.instructor}
+        </span>
+      )}
+      {showRoom && (
+        <span className="grid-secondary" style={{
+          overflow: "hidden", textOverflow: "ellipsis",
+          fontSize: 8, opacity: 0.65,
+        }}>
+          🏫 {course.room}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ── Grid ─────────────────────────────────────────────────
 function Grid({ selectedCourses, onRemove, gridRef, conflictIds }) {
   const slots = Array.from({ length: TOTAL_HOURS + 1 }, (_, i) => HOUR_START + i);
+
   return (
-    <div style={{ overflowX: "auto" }}>
-      {/* grid ส่วนที่จะ capture เป็น PNG */}
-      <div ref={gridRef} style={{ background: P.cardBg, padding: "6px 0" }}>
+    <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+      <div
+        ref={gridRef}
+        style={{ background: P.cardBg, padding: "6px 0", minWidth: 480 }}
+      >
         {/* header ชั่วโมง */}
-        <div style={{ display: "flex", paddingLeft: 72, marginBottom: 4 }}>
+        <div style={{ display: "flex", paddingLeft: 62, marginBottom: 4 }}>
           {slots.map(h => (
             <div key={h} style={{
               width: `${100 / TOTAL_HOURS}%`, flexShrink: 0,
-              fontSize: 10, color: P.textHint, textAlign: "center",
+              fontSize: 9, color: P.textHint, textAlign: "center",
             }}>{String(h).padStart(2, "0")}:00</div>
           ))}
         </div>
@@ -117,21 +199,29 @@ function Grid({ selectedCourses, onRemove, gridRef, conflictIds }) {
           const isSun = day === "SUN";
           const isSat = day === "SAT";
           const isWeekend = isSun || isSat;
-          const rowBg = isSun ? P.sunBg : isSat ? P.satBg : P.rowBg;
+          const rowBg       = isSun ? P.sunBg : isSat ? P.satBg : P.rowBg;
           const borderColor = isSun ? "#f0b8dd" : isSat ? P.borderMid : P.border;
+
           return (
-            <div key={day} style={{ display: "flex", alignItems: "center", marginBottom: 4, height: 38 }}>
+            <div key={day} style={{
+              display: "flex", alignItems: "center",
+              marginBottom: 3,
+              height: 46,
+            }}>
               <div style={{
-                width: 72, flexShrink: 0, fontSize: 11, textAlign: "right", paddingRight: 10,
+                width: 62, flexShrink: 0, fontSize: 10, textAlign: "right",
+                paddingRight: 8,
                 color: isSun ? "#c2185b" : isSat ? P.accentMid : P.textSecondary,
                 fontWeight: isWeekend ? 700 : 400,
               }}>
-                {DAY_LABELS[day]}
-                {isSun && <span style={{ fontSize: 9, marginLeft: 3, color: P.accentMid }}>☀</span>}
+                <span className="day-full">{DAY_LABELS[day]}</span>
+                <span className="day-short" style={{ display: "none" }}>{DAY_SHORT[day]}</span>
+                {isSun && <span style={{ fontSize: 8, marginLeft: 2, color: P.accentMid }}>☀</span>}
               </div>
               <div style={{
-                flex: 1, position: "relative", height: 30, borderRadius: 8,
-                background: rowBg, border: `1px solid ${borderColor}`,
+                flex: 1, position: "relative", height: 40,
+                borderRadius: 8, background: rowBg,
+                border: `1px solid ${borderColor}`,
               }}>
                 {Array.from({ length: TOTAL_HOURS - 1 }, (_, i) => (
                   <div key={i} style={{
@@ -146,31 +236,14 @@ function Grid({ selectedCourses, onRemove, gridRef, conflictIds }) {
                   const isConflicting = conflictIds.has(c.id);
                   const pal = PALETTE[c.colorIndex];
                   return (
-                    <div
+                    <GridBlock
                       key={c.id}
-                      onClick={() => onRemove(c)}
-                      title={`${c.name} | หมู่ ${c.sec}${c.instructor !== "-" ? " | " + c.instructor : ""} | ${c.start}–${c.end}${isConflicting ? " ⚠ เวลาชนกัน" : ""}`}
-                      style={{
-                        position: "absolute", top: 3, bottom: 3,
-                        left: pos.left, width: pos.width,
-                        borderRadius: 5, padding: "0 6px",
-                        // FIX 3: conflict = แดงแทน opacity
-                        background: isConflicting ? P.conflict : pal.bg,
-                        border: `1.5px solid ${isConflicting ? P.conflictBorder : pal.border}`,
-                        color: isConflicting ? P.conflictBorder : pal.text,
-                        fontSize: 10, fontWeight: 700,
-                        display: "flex", alignItems: "center", overflow: "hidden",
-                        cursor: "pointer", whiteSpace: "nowrap",
-                        transition: "opacity .1s",
-                      }}
-                      onMouseEnter={e => e.currentTarget.style.opacity = "0.75"}
-                      onMouseLeave={e => e.currentTarget.style.opacity = "1"}
-                    >
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {isConflicting && <span style={{ marginRight: 3 }}>⚠</span>}
-                        {c.code}<span style={{ opacity: 0.55, marginLeft: 3 }}>#{c.sec}</span>
-                      </span>
-                    </div>
+                      course={c}
+                      isConflicting={isConflicting}
+                      pal={pal}
+                      pos={pos}
+                      onRemove={onRemove}
+                    />
                   );
                 })}
               </div>
@@ -179,7 +252,10 @@ function Grid({ selectedCourses, onRemove, gridRef, conflictIds }) {
         })}
 
         {selectedCourses.length === 0 && (
-          <p style={{ textAlign: "center", fontSize: 11, color: P.textHint, padding: "4px 0 0" }}>
+          <p style={{
+            textAlign: "center", fontSize: 11, color: P.textHint,
+            padding: "8px 0 4px", margin: 0,
+          }}>
             เลือกวิชาจากรายการด้านขวาเพื่อแสดงในตาราง
           </p>
         )}
@@ -210,7 +286,6 @@ function SelectedPanel({ selectedCourses, onRemove, onClear, totalCredits, confl
 
       <CreditBar current={totalCredits} max={MAX_CREDITS} />
 
-      {/* FIX 3: แสดง conflict warning ใน panel */}
       {conflictIds.size > 0 && (
         <div style={{
           background: "#ffebee", border: "1px solid #e5393540", borderRadius: 8,
@@ -218,7 +293,7 @@ function SelectedPanel({ selectedCourses, onRemove, onClear, totalCredits, confl
           display: "flex", alignItems: "center", gap: 6,
         }}>
           <span>⚠</span>
-          <span>มี {conflictIds.size} วิชาที่เวลาชนกัน — ดูได้จากกล่องสีแดงในตาราง</span>
+          <span>มี {conflictIds.size} วิชาที่เวลาชนกัน — ดูกล่องสีแดงในตาราง</span>
         </div>
       )}
 
@@ -239,7 +314,7 @@ function SelectedPanel({ selectedCourses, onRemove, onClear, totalCredits, confl
                 display: "flex", alignItems: "flex-start", gap: 8,
               }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2, flexWrap: "wrap" }}>
                     {isConflicting && <span style={{ fontSize: 11, color: P.conflictBorder }}>⚠</span>}
                     <span style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: isConflicting ? P.conflictBorder : pal.border }}>
                       {c.code}
@@ -257,6 +332,7 @@ function SelectedPanel({ selectedCourses, onRemove, onClear, totalCredits, confl
                   <div style={{ fontSize: 10, color: P.textSecondary, display: "flex", gap: 5, flexWrap: "wrap" }}>
                     <span>{DAY_LABELS[c.day] ?? c.day} {c.start}–{c.end}</span>
                     {c.instructor !== "-" && <span>· {c.instructor}</span>}
+                    {c.room && <span>· 🏫 {c.room}</span>}
                     <span>· {c.credit} หน่วย</span>
                   </div>
                 </div>
@@ -277,25 +353,32 @@ function SelectedPanel({ selectedCourses, onRemove, onClear, totalCredits, confl
 }
 
 // ── CourseCard ────────────────────────────────────────────
-function CourseCard({ course, isSelected, isConflict, onToggle }) {
+function CourseCard({ course, isSelected, isConflict, isDuplicateCode, onToggle }) {
   const pal = PALETTE[course.colorIndex];
+  const isDisabled = !isSelected && isDuplicateCode;
+
   return (
     <div
-      onClick={() => !isConflict && onToggle(course)}
+      onClick={() => !isDisabled && onToggle(course)}
       style={{
-        border: isSelected ? `1.5px solid ${pal.border}` : `1px solid ${P.border}`,
+        border: isSelected
+          ? `1.5px solid ${pal.border}`
+          : isConflict
+            ? `1px solid ${P.conflictBorder}80`
+            : `1px solid ${P.border}`,
         borderRadius: 12, padding: "10px 12px",
-        background: isSelected ? pal.bg : P.cardBg,
-        cursor: isConflict ? "not-allowed" : "pointer",
-        opacity: isConflict ? 0.32 : 1,
+        background: isSelected ? pal.bg : isConflict ? "#fff5f6" : P.cardBg,
+        cursor: isDisabled ? "not-allowed" : "pointer",
+        opacity: isDisabled ? 0.4 : 1,
         transition: "border-color .1s, background .1s",
         userSelect: "none",
       }}
-      onMouseEnter={e => { if (!isConflict && !isSelected) e.currentTarget.style.borderColor = P.borderMid; }}
-      onMouseLeave={e => { if (!isSelected) e.currentTarget.style.borderColor = P.border; }}
+      onMouseEnter={e => { if (!isDisabled && !isSelected) e.currentTarget.style.borderColor = isConflict ? P.conflictBorder : P.borderMid; }}
+      onMouseLeave={e => { if (!isSelected) e.currentTarget.style.borderColor = isConflict ? P.conflictBorder + "80" : P.border; }}
     >
       <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
+          {/* บรรทัด 1: รหัส + หมู่ + ปีรหัส + badge */}
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 3 }}>
             <span style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 700, color: pal.border }}>
               {course.code}
@@ -306,16 +389,33 @@ function CourseCard({ course, isSelected, isConflict, onToggle }) {
               color: isSelected ? "#fff" : P.accent,
             }}>หมู่ {course.sec}</span>
             {course.year && (
+              <span style={{ fontSize: 10, padding: "2px 5px", borderRadius: 4, background: P.border, color: P.textSecondary }}>
+                ปี {course.year}
+              </span>
+            )}
+            {isConflict && !isDuplicateCode && (
               <span style={{
-                fontSize: 10, padding: "2px 5px", borderRadius: 4,
-                background: P.border, color: P.textSecondary,
-              }}>ปี {course.year}</span>
+                fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 4,
+                background: P.conflictBorder + "1a", color: P.conflictBorder,
+                display: "flex", alignItems: "center", gap: 3,
+              }}>⚠ ชนเวลา</span>
+            )}
+            {isDuplicateCode && !isSelected && (
+              <span style={{
+                fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 4,
+                background: "#e0e0e0", color: "#757575",
+                display: "flex", alignItems: "center", gap: 3,
+              }}>เลือกหมู่อื่นแล้ว</span>
             )}
           </div>
+
+          {/* บรรทัด 2: ชื่อวิชา */}
           <div style={{
             fontSize: 13, fontWeight: 600, color: P.textPrimary,
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginBottom: 3,
           }}>{course.name}</div>
+
+          {/* บรรทัด 3: เวลา + อาจารย์ + ห้อง */}
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             {course.start && (
               <span style={{ fontSize: 11, color: P.textSecondary, display: "flex", alignItems: "center", gap: 3 }}>
@@ -333,13 +433,21 @@ function CourseCard({ course, isSelected, isConflict, onToggle }) {
                 {course.instructor}
               </span>
             )}
+            {course.room && (
+              <span style={{ fontSize: 11, color: P.textHint, display: "flex", alignItems: "center", gap: 3 }}>
+                🏫 {course.room}
+              </span>
+            )}
           </div>
+
+          {/* สาขา */}
           {course.majorLabel && (
             <div style={{ fontSize: 10, color: P.textHint, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {course.majorLabel}
             </div>
           )}
         </div>
+
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5, flexShrink: 0 }}>
           <span style={{ fontSize: 11, color: P.textHint }}>{course.credit} หน่วย</span>
           <div style={{
@@ -357,30 +465,56 @@ function CourseCard({ course, isSelected, isConflict, onToggle }) {
 // ── SAMPLE DATA ───────────────────────────────────────────
 const SAMPLE_DATA = {
   courses: [
-    { code: "04252211", name: "Electric Circuit Analysis I", sec: "1", day: "MON", start: "09:30", end: "12:30", instructor: "อ.สมชาย", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
-    { code: "04252214", name: "Digital System Design", sec: "1", day: "MON", start: "13:30", end: "16:30", instructor: "อ.วิทยา", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
-    { code: "01355102", name: "English for University", sec: "9", day: "TUE", start: "13:30", end: "16:30", instructor: "อ.พิมพ์", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
-    { code: "04253201", name: "Basic Principles of Mechanics", sec: "1", day: "WED", start: "09:30", end: "12:30", instructor: "อ.ณัฐ", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
-    { code: "04252213", name: "Electric Circuit Lab", sec: "102", day: "THU", start: "13:30", end: "16:30", instructor: "อ.สมชาย", credit: 1, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
-    { code: "04252299", name: "Special Topics in EE", sec: "1", day: "SUN", start: "09:00", end: "12:00", instructor: "อ.ปิยวัฒน์", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
-    { code: "01132222", name: "Human Resource Management", sec: "1", day: "MON", start: "09:30", end: "12:30", instructor: "อ.นัฐนันท์", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
-    { code: "01101182", name: "Macroeconomics I", sec: "2", day: "MON", start: "13:30", end: "16:30", instructor: "อ.ฐิตาวรรณ", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
-    { code: "01132214", name: "Environment of Business", sec: "1", day: "WED", start: "13:30", end: "16:30", instructor: "อ.ธิดา", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
-    { code: "01455101", name: "Global Politics in Daily Life", sec: "2", day: "SUN", start: "13:00", end: "16:00", instructor: "อ.ประสงค์", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
-    { code: "01131211", name: "Business Finance", sec: "1", day: "THU", start: "13:30", end: "16:30", instructor: "อ.ชัยรัตน์", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
-    { code: "01418231", name: "Data Structures and Algorithms", sec: "1", day: "WED", start: "09:30", end: "12:30", instructor: "อ.ธีระ", credit: 3, year: "67", major_value: "B6001_B", major_label: "วิทยาการคอมพิวเตอร์ (B6001) -ป.ตรี" },
-    { code: "01418233", name: "Computer Architecture", sec: "1", day: "FRI", start: "13:30", end: "16:30", instructor: "อ.ประภัส", credit: 3, year: "67", major_value: "B6001_B", major_label: "วิทยาการคอมพิวเตอร์ (B6001) -ป.ตรี" },
-    { code: "01418299", name: "Senior Project I", sec: "1", day: "SAT", start: "09:00", end: "12:00", instructor: "อ.ธีระ", credit: 3, year: "65", major_value: "B6001_B", major_label: "วิทยาการคอมพิวเตอร์ (B6001) -ป.ตรี" },
+    { code: "04252211", name: "Electric Circuit Analysis I", sec: "1", day: "MON", start: "09:30", end: "12:30", instructor: "อ.ณธกร", room: "2-302", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
+    { code: "04252214", name: "Digital System Design", sec: "1", day: "MON", start: "13:30", end: "16:30", instructor: "อ.เศรษฐกร", room: "2-301", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
+    { code: "01355102", name: "English for University Life", sec: "9", day: "TUE", start: "13:30", end: "16:30", instructor: "อ.วีระชัย", room: "13-208/1", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
+    { code: "04253201", name: "Basic Principles of Engineering Mechanics", sec: "1", day: "WED", start: "09:30", end: "12:30", instructor: "อ.ประภากรณ์", room: "9-302", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
+    { code: "04252213", name: "Electric Circuit Laboratory", sec: "102", day: "THU", start: "13:30", end: "16:30", instructor: "อ.กิติโชค", room: "6-203", credit: 1, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
+    { code: "04252299", name: "Special Topics in EE", sec: "1", day: "SUN", start: "09:00", end: "12:00", instructor: "อ.ปิยวัฒน์", room: "", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
+    { code: "01132222", name: "Human Resource Management", sec: "1", day: "MON", start: "09:30", end: "12:30", instructor: "อ.นัฐนันท์", room: "13-211", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
+    { code: "01101182", name: "Macroeconomics I", sec: "2", day: "MON", start: "13:30", end: "16:30", instructor: "อ.ฐิตาวรรณ", room: "2-303", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
+    { code: "01418231", name: "Data Structures and Algorithms", sec: "1", day: "WED", start: "09:30", end: "12:30", instructor: "อ.ฐาปนี", room: "9-301/1", credit: 3, year: "67", major_value: "B6001_B", major_label: "วิทยาการคอมพิวเตอร์ (B6001) -ป.ตรี" },
+    { code: "01418233", name: "Computer Architecture", sec: "1", day: "FRI", start: "13:30", end: "16:30", instructor: "อ.ถนอมศักดิ์", room: "9-306", credit: 3, year: "67", major_value: "B6001_B", major_label: "วิทยาการคอมพิวเตอร์ (B6001) -ป.ตรี" },
+    { code: "01418299", name: "Senior Project I", sec: "1", day: "SAT", start: "09:00", end: "12:00", instructor: "อ.ธีระ", room: "7-114/2", credit: 3, year: "65", major_value: "B6001_B", major_label: "วิทยาการคอมพิวเตอร์ (B6001) -ป.ตรี" },
   ],
   majors: [
     { value: "B5602_B", label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
     { value: "C5101_B", label: "การจัดการ (C5101) -ป.ตรี" },
-    { value: "B5801_B", label: "เคมีประยุกต์ (B5801) -ป.ตรี" },
     { value: "B6001_B", label: "วิทยาการคอมพิวเตอร์ (B6001) -ป.ตรี" },
   ],
   std_year: "68",
   updated_at: null,
 };
+
+// แปลง "HH.MM" หรือ "HH:MM" → "HH:MM"
+function normalizeTime(raw) {
+  if (!raw) return "";
+  const s = String(raw).trim();
+  const sep = s.includes(".") ? "." : s.includes(":") ? ":" : null;
+  if (sep) {
+    const [h, m] = s.split(sep);
+    const min = String(m ?? "").startsWith("3") ? 30 : 0;
+    return `${String(parseInt(h, 10)).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+  }
+  if (/^\d{3,4}$/.test(s)) {
+    const n = parseInt(s, 10);
+    return `${String(Math.floor(n / 100)).padStart(2, "0")}:${String(n % 100).padStart(2, "0")}`;
+  }
+  return s;
+}
+
+// parse "day_time" format เก่า เช่น "MON 9.30-12.30" หรือ "MON 09:30-12:30"
+function parseDayTime(dt) {
+  if (!dt) return { day: "", start: "", end: "" };
+  const DAY_MAP = { SUN:"SUN", MON:"MON", TUE:"TUE", WED:"WED", THU:"THU", FRI:"FRI", SAT:"SAT" };
+  const m = String(dt).trim().match(/^(SUN|MON|TUE|WED|THU|FRI|SAT)\s+(.+)/i);
+  if (!m) return { day: "", start: "", end: "" };
+  const day = DAY_MAP[m[1].toUpperCase()] ?? "";
+  const timeStr = m[2];
+  const tm = timeStr.match(/(\d{1,2}[.:]\d{1,2}|\d{3,4})\s*[-–]\s*(\d{1,2}[.:]\d{1,2}|\d{3,4})/);
+  if (tm) return { day, start: normalizeTime(tm[1]), end: normalizeTime(tm[2]) };
+  return { day, start: "", end: "" };
+}
 
 function normalizeCourse(entry, index) {
   const code = String(entry.code ?? entry.subject_code ?? "").replace(/-\d{2,4}$/, "").trim();
@@ -391,15 +525,28 @@ function normalizeCourse(entry, index) {
   const year = String(entry.year ?? "");
   const majorValue = String(entry.major_value ?? "");
   const majorLabel = String(entry.major_label ?? "");
-  const day = String(entry.day ?? "");
-  const start = String(entry.start ?? "");
-  const end = String(entry.end ?? "");
+  const room = String(entry.room ?? "");
+
+  // รับได้ทั้ง format ใหม่ (day/start/end แยกกัน) และ format เก่า (day_time รวมกัน)
+  let day   = String(entry.day   ?? "");
+  let start = String(entry.start ?? "");
+  let end   = String(entry.end   ?? "");
+  if ((!day || !start || !end) && entry.day_time) {
+    const parsed = parseDayTime(entry.day_time);
+    if (!day)   day   = parsed.day;
+    if (!start) start = parsed.start;
+    if (!end)   end   = parsed.end;
+  }
+  // normalize เวลา เผื่อมาในรูปแบบ "9.30" แทน "09:30"
+  start = normalizeTime(start) || start;
+  end   = normalizeTime(end)   || end;
+
   const valid = !!(code && day && start && end);
   return {
     _raw: entry,
     id: `${code}_${sec}_${day}_${index}`,
     code, name, sec, day, start, end, credit,
-    instructor, year, majorValue, majorLabel,
+    instructor, year, majorValue, majorLabel, room,
     colorIndex: index % PALETTE.length,
     valid,
   };
@@ -420,29 +567,28 @@ function parseDataSource(raw) {
     courses: arr,
     majors,
     std_year: raw?.std_year ?? "",
-    updated_at: raw?.updated_at ?? null,   // FIX 4
+    updated_at: raw?.updated_at ?? null,
   };
 }
 
 // ── MAIN APP ──────────────────────────────────────────────
 export default function App() {
-  const [rawInput, setRawInput]         = useState("");
-  const [loadError, setLoadError]       = useState("");
-  const [warning, setWarning]           = useState("");
-  const [query, setQuery]               = useState("");
-  const [filterMajor, setFilterMajor]   = useState("");
-  const [filterYear, setFilterYear]     = useState("");
-  const [filterDay, setFilterDay]       = useState("");
-  const [jsonLoaded, setJsonLoaded]     = useState(false);
-  const [isLoading, setIsLoading]       = useState(true);
-  const [isExporting, setIsExporting]   = useState(false);  // FIX 1
-  const [dataSource, setDataSource]     = useState(SAMPLE_DATA);
+  const [rawInput, setRawInput]       = useState("");
+  const [loadError, setLoadError]     = useState("");
+  const [warning, setWarning]         = useState("");
+  const [query, setQuery]             = useState("");
+  const [filterMajor, setFilterMajor] = useState("");
+  const [filterYear, setFilterYear]   = useState("");
+  const [filterDay, setFilterDay]     = useState("");
+  const [jsonLoaded, setJsonLoaded]   = useState(false);
+  const [isLoading, setIsLoading]     = useState(true);
+  const [isExporting, setIsExporting] = useState(false);
+  const [dataSource, setDataSource]   = useState(SAMPLE_DATA);
   const [showUpdatePanel, setShowUpdatePanel] = useState(false);
-  const [updateInput, setUpdateInput]   = useState("");
-  const [updateError, setUpdateError]   = useState("");
-  const gridRef = useRef(null);  // FIX 1: ref สำหรับ export
+  const [updateInput, setUpdateInput] = useState("");
+  const [updateError, setUpdateError] = useState("");
+  const gridRef = useRef(null);
 
-  // FIX 2: โหลด selection จาก localStorage ตอน mount
   const [selected, setSelected] = useState(() => {
     try {
       const saved = localStorage.getItem(LS_KEY);
@@ -450,13 +596,11 @@ export default function App() {
     } catch { return []; }
   });
 
-  // FIX 2: sync selected → localStorage ทุกครั้งที่เปลี่ยน
   useEffect(() => {
     try { localStorage.setItem(LS_KEY, JSON.stringify(selected)); }
-    catch { /* quota exceeded — ไม่ critical */ }
+    catch { /* quota exceeded */ }
   }, [selected]);
 
-  // auto-fetch /all_timetables.json
   useEffect(() => {
     setIsLoading(true);
     fetch("/all_timetables.json")
@@ -498,7 +642,6 @@ export default function App() {
   );
   const totalCredits = selectedCourses.reduce((s, c) => s + c.credit, 0);
 
-  // FIX 3: คำนวณ conflictIds — set ของ id ทุกตัวที่ชนกันจริงๆ
   const conflictIds = useMemo(() => {
     const ids = new Set();
     for (let i = 0; i < selectedCourses.length; i++) {
@@ -512,6 +655,12 @@ export default function App() {
     return ids;
   }, [selectedCourses]);
 
+  // Set ของ course.code ที่ถูกเลือกไปแล้ว (สำหรับดัก duplicate)
+  const selectedCodes = useMemo(
+    () => new Set(selectedCourses.map(c => c.code)),
+    [selectedCourses]
+  );
+
   const filtered = useMemo(() => {
     let list = allCourses;
     if (filterMajor) list = list.filter(c => c.majorValue === filterMajor);
@@ -523,35 +672,57 @@ export default function App() {
         c.code.toLowerCase().includes(q) ||
         c.name.toLowerCase().includes(q) ||
         c.instructor.toLowerCase().includes(q) ||
-        c.sec.includes(q)
+        c.sec.includes(q) ||
+        c.room.toLowerCase().includes(q)
       );
     }
     return list;
   }, [allCourses, filterMajor, filterYear, filterDay, query]);
 
+  // ── toggle ────────────────────────────────────────────
   function toggle(course) {
+    // ถอนวิชา
     if (selected.includes(course.id)) {
-      setSelected(p => p.filter(id => id !== course.id)); setWarning(""); return;
-    }
-    if (totalCredits + course.credit > MAX_CREDITS) {
-      setWarning(`หน่วยกิตเกิน ${MAX_CREDITS} (จะเป็น ${totalCredits + course.credit} หน่วย)`); return;
-    }
-    const conflict = selectedCourses.find(c => hasConflict(c, course));
-    if (conflict) {
-      // FIX 3: อนุญาตให้เพิ่มได้แต่แจ้ง warning และ highlight แดง
-      setSelected(p => [...p, course.id]);
-      setWarning(`⚠ ${course.name} หมู่ ${course.sec} เวลาชนกับ ${conflict.name} หมู่ ${conflict.sec} — ทั้งสองวิชาจะถูก highlight แดงในตาราง`);
+      setSelected(p => p.filter(id => id !== course.id));
+      setWarning("");
       return;
     }
-    setSelected(p => [...p, course.id]); setWarning("");
+
+    // ✅ ดักซ้ำ: รหัสวิชาเดียวกัน คนละ sec
+    const duplicateCode = selectedCourses.find(c => c.code === course.code);
+    if (duplicateCode) {
+      setWarning(
+        `⚠️ เลือกวิชา ${course.code} หมู่ ${duplicateCode.sec} ไปแล้ว (เลือกได้ 1 หมู่เรียน/รายวิชา)`
+      );
+      return;
+    }
+
+    // เกินหน่วยกิต
+    if (totalCredits + course.credit > MAX_CREDITS) {
+      setWarning(`หน่วยกิตเกิน ${MAX_CREDITS} (จะเป็น ${totalCredits + course.credit} หน่วย)`);
+      return;
+    }
+
+    // เพิ่มได้ แต่เวลาชนกัน — highlight แดง
+    const conflict = selectedCourses.find(c => hasConflict(c, course));
+    if (conflict) {
+      setSelected(p => [...p, course.id]);
+      setWarning(
+        `⚠ ${course.code} หมู่ ${course.sec} เวลาชนกับ ${conflict.code} หมู่ ${conflict.sec} — กล่องสีแดงแสดงในตาราง`
+      );
+      return;
+    }
+
+    setSelected(p => [...p, course.id]);
+    setWarning("");
   }
 
-  // FIX 1: Export grid เป็น PNG ด้วย html2canvas (โหลด dynamic)
+  // ── Export PNG ────────────────────────────────────────
   const exportPNG = useCallback(async () => {
     if (!gridRef.current || selectedCourses.length === 0) return;
     setIsExporting(true);
+    const el = gridRef.current;
     try {
-      // โหลด html2canvas จาก CDN แบบ dynamic
       if (!window.html2canvas) {
         await new Promise((resolve, reject) => {
           const s = document.createElement("script");
@@ -560,20 +731,26 @@ export default function App() {
           document.head.appendChild(s);
         });
       }
-      const canvas = await window.html2canvas(gridRef.current, {
+      el.style.minWidth = "960px";
+      const canvas = await window.html2canvas(el, {
         backgroundColor: "#ffffff",
         scale: 2,
         useCORS: true,
         logging: false,
+        windowWidth: 1200,
       });
       const link = document.createElement("a");
-      link.download = `timetable_${new Date().toLocaleDateString("th-TH").replace(/\//g, "-")}.png`;
+      const date = new Date()
+        .toLocaleDateString("th-TH", { year: "numeric", month: "2-digit", day: "2-digit" })
+        .replace(/\//g, "-");
+      link.download = `timetable_${date}.png`;
       link.href = canvas.toDataURL("image/png");
       link.click();
     } catch (err) {
       console.error("Export failed:", err);
       alert("Export ไม่สำเร็จ — กรุณาลองใหม่อีกครั้ง");
     } finally {
+      el.style.minWidth = "";
       setIsExporting(false);
     }
   }, [selectedCourses.length]);
@@ -589,6 +766,7 @@ export default function App() {
 
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
         .timetable-layout {
           display: grid;
           grid-template-columns: 1fr;
@@ -598,19 +776,42 @@ export default function App() {
         .selected-panel-list { max-height: 240px; overflow-y: auto; }
         .course-list-scroll  { max-height: 420px; overflow-y: auto; }
         .filter-select { min-width: 0; flex: 1; }
+
         @media (min-width: 900px) {
           .timetable-layout {
             grid-template-columns: minmax(0, 1fr) 340px;
             align-items: start;
           }
-          /* ไม่ใส่ overflow-y ที่ sidebar-sticky เพราะทำให้ sticky พัง (Firefox) */
-          .sidebar-sticky { position: sticky; top: 68px; max-height: calc(100vh - 84px); }
-          .course-list-scroll  { max-height: calc(100vh - 540px); min-height: 160px; }
-          .selected-panel-list { max-height: 220px; }
+          .sidebar-sticky {
+            position: sticky;
+            top: 60px;
+            max-height: calc(100vh - 76px);
+            overflow-y: auto;
+          }
+          .course-list-scroll  { max-height: calc(100vh - 550px); min-height: 160px; }
+          .selected-panel-list { max-height: 200px; }
         }
         @media (min-width: 1200px) {
           .timetable-layout { grid-template-columns: minmax(0, 1fr) 380px; }
           .course-list-scroll { max-height: calc(100vh - 520px); }
+        }
+
+        @media (max-width: 599px) {
+          .grid-secondary { display: none !important; }
+          .day-full { display: none; }
+          .day-short { display: inline !important; }
+        }
+        @media (min-width: 600px) {
+          .day-short { display: none !important; }
+        }
+
+        .selected-panel-list::-webkit-scrollbar,
+        .course-list-scroll::-webkit-scrollbar,
+        .sidebar-sticky::-webkit-scrollbar { width: 4px; }
+        .selected-panel-list::-webkit-scrollbar-thumb,
+        .course-list-scroll::-webkit-scrollbar-thumb,
+        .sidebar-sticky::-webkit-scrollbar-thumb {
+          background: ${P.border}; border-radius: 99px;
         }
       `}</style>
 
@@ -621,9 +822,9 @@ export default function App() {
       }}>
         <div style={{
           maxWidth: 1320, margin: "0 auto", padding: "0 16px",
-          height: 52, display: "flex", alignItems: "center", justifyContent: "space-between",
+          height: 52, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
             <div style={{
               width: 30, height: 30, borderRadius: 8, background: P.accent,
               display: "flex", alignItems: "center", justifyContent: "center",
@@ -638,8 +839,7 @@ export default function App() {
               <div style={{ fontSize: 13, fontWeight: 700, color: P.textPrimary, lineHeight: 1.1 }}>
                 Timetable Builder
               </div>
-              {/* FIX 4: แสดง updated_at + loading state */}
-              <div style={{ fontSize: 10, color: P.textHint, display: "flex", alignItems: "center", gap: 4 }}>
+              <div style={{ fontSize: 10, color: P.textHint }}>
                 มก.ฉกส.
                 {isLoading
                   ? <span style={{ color: P.accentMid, marginLeft: 4 }}>
@@ -653,34 +853,35 @@ export default function App() {
                     ? <>
                         <span style={{ marginLeft: 4 }}>· {allCourses.length.toLocaleString()} รายวิชา</span>
                         {dataSource.updated_at && (
-                          <span style={{ color: P.textHint, marginLeft: 4 }}>
+                          <span style={{ marginLeft: 4, color: P.textHint }}>
                             · อัพเดท {dataSource.updated_at}
                           </span>
                         )}
                       </>
-                    : <span style={{ marginLeft: 4 }}>· ตัวอย่างข้อมูล</span>
+                    : <span style={{ marginLeft: 4 }}>· ตัวอย่าง</span>
                 }
               </div>
             </div>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
             {selectedCourses.length > 0 && (
-              <span style={{ fontSize: 12, color: P.accent, fontWeight: 700 }}>
-                {selectedCourses.length} วิชา · {totalCredits} หน่วยกิต
+              <span style={{ fontSize: 11, color: P.accent, fontWeight: 700, whiteSpace: "nowrap" }}>
+                {selectedCourses.length} วิชา · {totalCredits} หน่วย
               </span>
             )}
-            {/* FIX 1: ปุ่ม Export PNG */}
+
             {selectedCourses.length > 0 && (
               <button
                 onClick={exportPNG}
                 disabled={isExporting}
-                title="บันทึกตารางเรียนเป็น PNG"
                 style={{
-                  fontSize: 11, padding: "5px 12px", borderRadius: 8, cursor: isExporting ? "wait" : "pointer",
+                  fontSize: 11, padding: "5px 12px", borderRadius: 8,
+                  cursor: isExporting ? "wait" : "pointer",
                   background: isExporting ? P.border : P.accentLt,
-                  color: P.accent, border: `1px solid ${P.borderMid}`, fontWeight: 600,
-                  display: "flex", alignItems: "center", gap: 5, transition: "all .15s",
+                  color: P.accent, border: `1px solid ${P.borderMid}`,
+                  fontWeight: 600, display: "flex", alignItems: "center", gap: 5,
+                  whiteSpace: "nowrap",
                 }}
               >
                 {isExporting
@@ -691,10 +892,11 @@ export default function App() {
                   : <><svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2}>
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                         <polyline points="7 10 12 15 17 10"/><line x1={12} y1={15} x2={12} y2={3}/>
-                      </svg> บันทึก PNG</>
+                      </svg> 📸 บันทึก PNG</>
                 }
               </button>
             )}
+
             {jsonLoaded && (
               <button
                 onClick={() => { setShowUpdatePanel(p => !p); setUpdateError(""); }}
@@ -702,7 +904,7 @@ export default function App() {
                   fontSize: 11, padding: "5px 12px", borderRadius: 8, cursor: "pointer",
                   background: showUpdatePanel ? P.accent : P.accentLt,
                   color: showUpdatePanel ? "#fff" : P.accent,
-                  border: `1px solid ${P.borderMid}`, fontWeight: 600, transition: "all .15s",
+                  border: `1px solid ${P.borderMid}`, fontWeight: 600, whiteSpace: "nowrap",
                 }}
               >
                 {showUpdatePanel ? "✕ ปิด" : "↑ อัพเดทข้อมูล"}
@@ -721,11 +923,8 @@ export default function App() {
             padding: "14px 16px", marginBottom: 16,
           }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: "#e65100", marginBottom: 6 }}>
-              ↑ อัพเดทข้อมูลใหม่ (จะแทนที่ข้อมูลเดิมทั้งหมด)
+              ↑ อัพเดทข้อมูลใหม่ (แทนที่ข้อมูลเดิมทั้งหมด + ล้างวิชาที่เลือก)
             </div>
-            <p style={{ fontSize: 11, color: "#795548", margin: "0 0 8px" }}>
-              วาง JSON ใหม่จาก bot_2.py ด้านล่าง — ข้อมูลเดิมทั้งหมดจะถูกแทนที่ทันที วิชาที่เลือกไว้จะถูกล้าง
-            </p>
             <textarea
               placeholder="วาง all_timetables.json ใหม่ตรงนี้..."
               value={updateInput} onChange={e => setUpdateInput(e.target.value)}
@@ -736,7 +935,7 @@ export default function App() {
                 height: 72, boxSizing: "border-box", color: P.textPrimary, outline: "none",
               }}
             />
-            <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
               <button onClick={() => updateInput && updateJSON(updateInput)} style={{
                 padding: "5px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700,
                 background: "#e65100", color: "#fff", border: "none", cursor: "pointer",
@@ -753,7 +952,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Loading banner */}
+        {/* Loading */}
         {isLoading && (
           <div style={{
             background: P.accentLt, border: `1px solid ${P.borderMid}`, borderRadius: 12,
@@ -768,7 +967,7 @@ export default function App() {
           </div>
         )}
 
-        {/* JSON upload banner (เมื่อโหลดเสร็จแล้วไม่เจอไฟล์) */}
+        {/* JSON upload banner */}
         {!isLoading && !jsonLoaded && (
           <div style={{
             background: P.accentLt, border: `1px solid ${P.borderMid}`, borderRadius: 12,
@@ -778,11 +977,11 @@ export default function App() {
               <circle cx={12} cy={12} r={10} /><line x1={12} y1={8} x2={12} y2={12} /><line x1={12} y1={16} x2={12.01} y2={16} />
             </svg>
             <div style={{ flex: 1, fontSize: 12, color: P.accent }}>
-              <strong>กำลังใช้ข้อมูลตัวอย่าง</strong> — วางเนื้อหา{" "}
-              <code style={{ background: "#fff", padding: "1px 5px", borderRadius: 3 }}>all_timetables.json</code>{" "}
-              ลงในช่องด้านล่าง
+              <strong>กำลังใช้ข้อมูลตัวอย่าง</strong> — วาง{" "}
+              <code style={{ background: "#fff", padding: "1px 5px", borderRadius: 3 }}>all_timetables.json</code>
+              {" "}ลงในช่องด้านล่าง
               <textarea
-                placeholder='วาง JSON ที่ได้จาก bot_2.py ตรงนี้ แล้วกด "โหลดข้อมูล"...'
+                placeholder='วาง JSON ที่ได้จาก bot.py ตรงนี้...'
                 value={rawInput} onChange={e => setRawInput(e.target.value)}
                 style={{
                   display: "block", width: "100%", marginTop: 8, padding: "8px 10px",
@@ -791,7 +990,7 @@ export default function App() {
                   height: 68, boxSizing: "border-box", color: P.textPrimary, outline: "none",
                 }}
               />
-              <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <button onClick={() => rawInput && loadJSON(rawInput)} style={{
                   padding: "5px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700,
                   background: P.accent, color: "#fff", border: "none", cursor: "pointer",
@@ -840,13 +1039,13 @@ export default function App() {
               <h2 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: P.textPrimary }}>
                 ตารางเรียน
                 <span style={{ fontSize: 10, fontWeight: 400, color: P.textHint, marginLeft: 8 }}>
-                  (☀ อาทิตย์–เสาร์)
+                  คลิกบล็อกเพื่อเอาออก
                 </span>
               </h2>
               {selectedCourses.length > 0 && (
                 <button onClick={() => { setSelected([]); setWarning(""); }} style={{
                   background: "none", border: "none", cursor: "pointer",
-                  fontSize: 11, color: P.textHint, padding: 0,
+                  fontSize: 11, color: P.textHint, padding: 0, flexShrink: 0,
                 }}
                   onMouseEnter={e => e.currentTarget.style.color = "#e53935"}
                   onMouseLeave={e => e.currentTarget.style.color = P.textHint}
@@ -881,7 +1080,7 @@ export default function App() {
                 <span style={{
                   fontSize: 11, padding: "2px 8px", borderRadius: 99,
                   background: P.accentLt, color: P.accent, fontWeight: 600,
-                }}>{filtered.length.toLocaleString()} รายการ</span>
+                }}>{filtered.length.toLocaleString()}</span>
               </div>
 
               {/* Filters */}
@@ -900,13 +1099,13 @@ export default function App() {
                 <div style={{ display: "flex", gap: 8, minWidth: 0 }}>
                   {years.length > 0 && (
                     <select value={filterYear} onChange={e => setFilterYear(e.target.value)}
-                      className="filter-select" style={{ ...selectStyle }}>
+                      className="filter-select" style={selectStyle}>
                       <option value="">ทุกปีรหัส</option>
-                      {years.map(y => <option key={y} value={y}>ปีรหัส {y}</option>)}
+                      {years.map(y => <option key={y} value={y}>ปี {y}</option>)}
                     </select>
                   )}
                   <select value={filterDay} onChange={e => setFilterDay(e.target.value)}
-                    className="filter-select" style={{ ...selectStyle }}>
+                    className="filter-select" style={selectStyle}>
                     <option value="">ทุกวัน</option>
                     {DAYS.map(d => <option key={d} value={d}>{DAY_LABELS[d]}</option>)}
                   </select>
@@ -928,7 +1127,7 @@ export default function App() {
                 </svg>
                 <input
                   type="text"
-                  placeholder="ค้นหารหัส ชื่อวิชา หมู่ หรืออาจารย์..."
+                  placeholder="ค้นหารหัส ชื่อ หมู่ อาจารย์ ห้อง..."
                   value={query} onChange={e => setQuery(e.target.value)}
                   style={{
                     width: "100%", padding: "7px 10px 7px 30px", fontSize: 13,
@@ -943,7 +1142,7 @@ export default function App() {
               {/* Course cards */}
               <div className="course-list-scroll" style={{ display: "flex", flexDirection: "column", gap: 6, paddingRight: 2 }}>
                 {filtered.length === 0 && (
-                  <p style={{ textAlign: "center", fontSize: 13, color: P.textHint, padding: "36px 0" }}>
+                  <p style={{ textAlign: "center", fontSize: 13, color: P.textHint, padding: "36px 0", margin: 0 }}>
                     ไม่พบรายวิชา
                   </p>
                 )}
@@ -952,7 +1151,14 @@ export default function App() {
                     key={course.id}
                     course={course}
                     isSelected={selected.includes(course.id)}
-                    isConflict={!selected.includes(course.id) && selectedCourses.some(c => hasConflict(c, course))}
+                    isConflict={
+                      !selected.includes(course.id) &&
+                      selectedCourses.some(c => hasConflict(c, course))
+                    }
+                    isDuplicateCode={
+                      !selected.includes(course.id) &&
+                      selectedCodes.has(course.code)
+                    }
                     onToggle={toggle}
                   />
                 ))}
