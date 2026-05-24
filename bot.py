@@ -178,6 +178,19 @@ def parse_timetable_html(html, major_value="", major_label="", std_year=""):
                         instructor = l.strip()
                         break
 
+                # ── ห้องเรียน ──
+                room = ""
+                for l in lines:
+                    m_room = re.search(r"ห้อง\s*([^\s,]+)", l)
+                    if m_room:
+                        room = m_room.group(1).strip()
+                        break
+                    # pattern แบบ "อาคาร X ชั้น Y ห้อง Z" หรือ "SC1-101" หรือ room code
+                    m_room2 = re.search(r"\b([A-Z]{1,4}\d{1,4}[-/]\d{2,4}|[A-Z]{1,4}\s*\d{3,4})\b", l)
+                    if m_room2 and l != lines[0]:  # ไม่ใช่บรรทัดรหัสวิชา
+                        room = m_room2.group(1).strip()
+                        break
+
                 # key รวม std_year เพื่อแยก section ที่เหมือนกันแต่ต่างปี
                 key = f"{code}_{sec}_{current_day}_{std_year}"
                 if key in seen:
@@ -192,13 +205,14 @@ def parse_timetable_html(html, major_value="", major_label="", std_year=""):
                     "start": start or "",
                     "end": end or "",
                     "instructor": instructor,
+                    "room": room,
                     "credit": 3,
                     "year": std_year,
                     "major_value": major_value,
                     "major_label": major_label,
                 }
                 results.append(course)
-                print(f"    ✓ {code} sec{sec} {start}-{end}  {name[:20]}")
+                print(f"    ✓ {code} sec{sec} {start}-{end}  {name[:20]}  ห้อง:{room or '-'}")
 
     return results
 
