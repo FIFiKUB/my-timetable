@@ -1,0 +1,147 @@
+<html><head>
+<title>ตารางเรียน</title>
+<meta http-equiv="Content-Type" content="text/html; charset=tis-620">
+<meta name="keywords" content="">
+<meta name="description" content="">
+<link rel="stylesheet" href="css.css" type="text/css" media="screen">
+
+<script type="text/javascript" src="jquery-1.8.2.js"></script>
+<script type="text/javascript" src="getTimetableX66.js"></script>
+<script type="text/javascript" src="getTableFixX66.js"></script>
+<link rel="stylesheet" href="bootstrap.min.css">
+    <link type="text/css" rel="stylesheet" href="jquery-ui.min.css">
+    <link type="text/css" rel="stylesheet" href="jquery-ui.theme.min.css">     
+    <style type="text/css">
+ 
+        .ui-autocomplete {  
+            padding-right: 5px;
+            max-height:200px !important;
+            overflow: auto !important;
+        }  
+    </style>
+	
+<script type="text/javascript" src="scripts/jquery-1.4.3.min.js"></script>
+<script type="text/javascript" src="fancybox/jquery.mousewheel-3.0.4.pack.js"></script>
+<script type="text/javascript" src="fancybox/jquery.fancybox-1.3.4.pack.js"></script>
+<link rel="stylesheet" type="text/css" href="fancybox/jquery.fancybox-1.3.4.css" media="screen">
+ <script type="text/javascript">
+	function KeyCode(objId)
+	{
+	if ((event.keyCode >= 48 && event.keyCode<=57) || (event.keyCode>=65 && event.keyCode<=90) || (event.keyCode>=97 && event.keyCode<=122) || event.keyCode==32) //48-57(ตัวเลข) ,65-90(Eng ตัวพิมพ์ใหญ่ ) ,97-122(Eng ตัวพิมพ์เล็ก)
+		{
+			return true;
+		}
+		else
+		{
+			alert("กรอกได้เฉพาะ a-z และ 0-9");
+			return false;
+		}
+    }
+</script>
+<script type="text/javascript">
+		$(document).ready(function() {
+			$('a[id^="edit"]').fancybox({
+				'width'				: '45%',
+				'height'			: '50%',
+				'autoScale'     	: false,
+				'transitionIn'		: 'none',
+				'transitionOut'		: 'none',
+				'type'				: 'iframe',
+			});
+		});
+</script>	
+<style>
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+ 
+th, td {
+  padding: 8px;
+  text-align: left;
+  border-bottom: 1px solid #ddd;
+}
+
+tr:hover {background-color: #D5FCB7;}
+</style>
+</head>
+<body onload="javascript:showTimeTable();">
+
+<div class="content">
+
+
+
+ <div id="myHead">
+ตารางเรียน ภาคต้น ปีการศึกษา 2569<br>
+มหาวิทยาลัยเกษตรศาสตร์ วิทยาเขตเฉลิมพระเกียรติ จังหวัดสกลนคร 
+</div>
+<div id="cssmenu">
+<ul>  
+	 
+	<li><a href="index.php"><span>ตารางเรียน</span></a></li> 
+	<li><a href="index.php?flag=FM"><span>สาขา-ชั้นปี</span></a></li> 
+	<li><a href="index.php?flag=FR"><span>ตารางห้องเรียน</span></a></li> 
+	<li><a href="index.php?flag=FT"><span>ตารางสอน</span></a></li> 
+</ul>
+<form></form>
+</div>
+<br>
+ <center>
+<form name="formTable" method="post" action="">
+<table style="width:100%;">
+ <tbody><tr><td style="width:40%; text-align:right;">ปีการศึกษา : <input type="number" name="year" maxlength="4" value="2569" required="required" placeholder="2566, 2567 เป็นต้น " style="width:200px;font-size:1em;"> 
+          </td>
+<td style="text-align:left;">
+		  ภาค :  
+			<select id="sem" name="sem" width="150px" style="width:150px;">
+							<option value="1" selected=""> ต้น </option>
+				<option value="2"> ปลาย </option>
+				<option value="0"> ฤดูร้อน </option>
+								
+			</select> 
+			 
+			</td>
+</tr>
+		
+ <tr><td style="width:40%; text-align:right;">
+ <input type="hidden" id="txtSearch" style="width:120px;font-weight:bold;text-align:center;" value="" disabled=""> สาขาวิชา ::
+ <select name="major_id" style="width:400px;">
+	<option value="ABCD_A">ทุกคณะ (ABCD)</option><option value="A_A">คณะ ทอ. (A) ทุกสาขา</option><option value="B_A">คณะ วว. (B) ทุกสาขา</option><option value="C_A">คณะ ศว. (C) ทุกสาขา</option><option value="D_A">คณะ สศ. (D) ทุกสาขา</option><option value="C5701_B">การเงิน (C5701) -ป.ตรี</option><option value="C5101_B">การจัดการ (C5101) -ป.ตรี</option><option value="A6101_B">การจัดการทรัพยากรเกษตรและธุรกิจเกษตร (A6101) -ป.ตรี</option><option value="C6301_B">การจัดการโรงแรมและท่องเที่ยวสมัยใหม่ (C6301) -ป.ตรี</option><option value="C6102_B">การจัดการอุตสาหกรรมการบริการ (การจัดการการท่องเที่ยวร่วมสมัย) (C6102) -ป.ตรี</option><option value="C6101_B">การจัดการอุตสาหกรรมการบริการ (การจัดการโรงแรม) (C6101) -ป.ตรี</option><option value="C5401_B">การตลาด (C5401) -ป.ตรี</option><option value="C5702_B">การบริหารการเงินและการลงทุน (C5702) -ป.ตรี</option><option value="C5201_B">การบัญชี (C5201) -ป.ตรี</option><option value="B5801_B">เคมีประยุกต์ (B5801) -ป.ตรี</option><option value="A5501_B">ทรัพยากรเกษตรและการจัดการการผลิต (A5501) -ป.ตรี</option><option value="A6001_B">เทคโนโลยีการเพาะเลี้ยงสัตว์น้ำอย่างยั่งยืน (A6001) -ป.ตรี</option><option value="A5201_B">เทคโนโลยีการอาหาร (A5201) -ป.ตรี</option><option value="B6601_B">เทคโนโลยีพลังงานเพื่อความยั่งยืน (B6601) -ป.ตรี</option><option value="C5801_B">นิติศาสตร์ (C5801) -ป.ตรี</option><option value="A5901_B">พืชศาสตร์ (A5901) -ป.ตรี</option><option value="C5601_B">ภาษาอังกฤษ (C5601) -ป.ตรี</option><option value="C5901_B">รัฐประศาสนศาสตร์ (C5901) -ป.ตรี</option><option value="B6501_B">วิทยาการข้อมูล (B6501) -ป.ตรี</option><option value="B6001_B">วิทยาการคอมพิวเตอร์ (B6001) -ป.ตรี</option><option value="B6101_B">วิศวกรรมคอมพิวเตอร์ (B6101) -ป.ตรี</option><option value="B5502_B">วิศวกรรมเครื่องกลและการผลิต (B5502) -ป.ตรี</option><option value="B5602_B">วิศวกรรมไฟฟ้า (B5602) -ป.ตรี</option><option value="B5702_B">วิศวกรรมโยธา (B5702) -ป.ตรี</option><option value="B6401_B">วิศวกรรมสิ่งแวดล้อมเพื่อการพัฒนาอย่างยั่งยืน (B6401) -ป.ตรี</option><option value="B6201_B">วิศวกรรมอุตสาหการ (B6201) -ป.ตรี</option><option value="A5701_B">สัตวศาสตร์ (A5701) -ป.ตรี</option><option value="D5101_B">สาธารณสุขศาสตร์ (D5101) -ป.ตรี</option><option value="D5201_B">อนามัยสิ่งแวดล้อม (D5201) -ป.ตรี</option><option value="D5301_B">อาชีวอนามัยและความปลอดภัย (D5301) -ป.ตรี</option><option value="A5401_B">อาหารปลอดภัยและโภชนาการ (A5401) -ป.ตรี</option><option value="XU02_M">เทคโนโลยีการอาหาร (XU02) -ป.โท</option><option value="XC60_M">บริหารธุรกิจมหาบัณฑิต (XC60) -ป.โท</option><option value="XC02_M">พลศึกษา (XC02) -ป.โท</option><option value="XU03_M">พืชศาสตร์ (XU03) -ป.โท</option><option value="XV02_M">วิทยาศาสตร์สุขภาพหนึ่งเดียว (XV02) -ป.โท</option><option value="XB02_M">วิศวกรรมศาสตร์มหาบัณฑิต วิศวกรรมไฟฟ้าและคอมพิวเตอร์ (XB02) -ป.โท</option><option value="XV01_M">สาธารณสุขศาสตรมหาบัณฑิต (XV01) -ป.โท</option><option value="XV60_M">สาธารณสุขศาสตรมหาบัณฑิต (XV60) -ป.โท</option><option value="XB02_D">ปรัชญาดุษฎีบัณฑิต วิศวกรรมไฟฟ้าและคอมพิวเตอร์ (XB02) -ป.เอก</option><option value="XV02_D">วิทยาศาสตร์สุขภาพหนึ่งเดียว  (XV02) -ป.เอก</option><option value="XV01_D">สาธารณสุขศาสตรดุษฎีบัณฑิต (XV01) -ป.เอก</option>	</select>
+	 </td>
+ 
+ <td style="width:30%;text-align:center;">
+  
+
+นิสิตรหัส :: 
+ <input type="number" name="std_year" maxlength="2" max="80" value="" width="100px" style="width:100px;" onkeydown="if (event.keyCode == 13) {return showTableFix();}">
+ <input name="htSearch" id="htSearch" type="hidden" value="">
+ <font size="3">*ตย. 59,60,61 </font></td>
+ 
+ <td style="width:30%;text-align:left; ">สำหรับนิสิต :: 
+ 	 <input type="radio" name="flag_status" value="R" checked="">ภาคปกติ
+	<input type="radio" name="flag_status" value="E">ภาคพิเศษ 
+	
+	
+</td></tr>
+ 
+  <tr><td colspan="3"><center>
+  <input type="submit" name="btnMajor" value=" ค้นหา " style="width:100px;font-weight:bold;text-align:center;">
+  </center>
+</td></tr>
+</tbody></table>
+
+	</form></center>
+	
+	<p style="page-break-after: always"></p><!-- when print page break -->
+		<!-- <div id="loadTag"></div><div id="ListBox"></div> -->
+ 
+</div>
+
+<br>
+ 
+<center><font size="3" color="gray">
+<!-- Edit Sep,2013 :: By ANISA,ITOAS,CSCKU -->
+ Edit Nov,2019 :: By IT, CSCKU  
+</font></center>
+
+<div id="fancybox-tmp"></div><div id="fancybox-loading"><div></div></div><div id="fancybox-overlay"></div><div id="fancybox-wrap"><div id="fancybox-outer"><div class="fancybox-bg" id="fancybox-bg-n"></div><div class="fancybox-bg" id="fancybox-bg-ne"></div><div class="fancybox-bg" id="fancybox-bg-e"></div><div class="fancybox-bg" id="fancybox-bg-se"></div><div class="fancybox-bg" id="fancybox-bg-s"></div><div class="fancybox-bg" id="fancybox-bg-sw"></div><div class="fancybox-bg" id="fancybox-bg-w"></div><div class="fancybox-bg" id="fancybox-bg-nw"></div><div id="fancybox-content"></div><a id="fancybox-close"></a><div id="fancybox-title"></div><a href="javascript:;" id="fancybox-left"><span class="fancy-ico" id="fancybox-left-ico"></span></a><a href="javascript:;" id="fancybox-right"><span class="fancy-ico" id="fancybox-right-ico"></span></a></div></div></body></html>
