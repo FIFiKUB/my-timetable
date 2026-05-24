@@ -1,40 +1,41 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 
 const MAX_CREDITS = 22;
 const HOUR_START = 8;
 const HOUR_END = 20;
 const TOTAL_HOURS = HOUR_END - HOUR_START;
 
-const DAYS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
+// วันอาทิตย์ขึ้นก่อน
+const DAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 const DAY_LABELS = {
-  MON: "จันทร์", TUE: "อังคาร", WED: "พุธ",
-  THU: "พฤหัสฯ", FRI: "ศุกร์", SAT: "เสาร์", SUN: "อาทิตย์",
+  SUN: "อาทิตย์", MON: "จันทร์", TUE: "อังคาร", WED: "พุธ",
+  THU: "พฤหัสฯ", FRI: "ศุกร์", SAT: "เสาร์",
 };
 const DAY_SHORT = {
-  MON: "จ", TUE: "อ", WED: "พ", THU: "พฤ", FRI: "ศ", SAT: "ส", SUN: "อา",
+  SUN: "อา", MON: "จ", TUE: "อ", WED: "พ", THU: "พฤ", FRI: "ศ", SAT: "ส",
 };
 
-// ── Pink-toned palette ───────────────────────────────────
 const P = {
-  pageBg:    "#fdf2f8",
-  cardBg:    "#ffffff",
-  headerBg:  "#ffffff",
-  border:    "#f5d0e8",
-  borderMid: "#e8a7cf",
-  rowBg:     "#fdf7fb",
-  gridLine:  "#f3d7ec",
-  accent:    "#c2185b",
-  accentLt:  "#fce4ec",
-  accentMid: "#e91e8c",
+  pageBg:        "#fdf2f8",
+  cardBg:        "#ffffff",
+  headerBg:      "#ffffff",
+  border:        "#f5d0e8",
+  borderMid:     "#e8a7cf",
+  rowBg:         "#fdf7fb",
+  gridLine:      "#f3d7ec",
+  accent:        "#c2185b",
+  accentLt:      "#fce4ec",
+  accentMid:     "#e91e8c",
   textPrimary:   "#3b1f2b",
   textSecondary: "#9c6b83",
   textHint:      "#d4a8c0",
-  warn:   "#fff8e1",
-  warnBorder: "#ffe082",
-  warnText:   "#795548",
+  warn:          "#fff8e1",
+  warnBorder:    "#ffe082",
+  warnText:      "#795548",
+  sunBg:         "#fff0fb",
+  satBg:         "#fef6ff",
 };
 
-// Course block colours — all in the pink/rose/mauve family
 const PALETTE = [
   { bg: "#fce4ec", border: "#e91e8c", text: "#880e4f" },
   { bg: "#fce4f7", border: "#ab47bc", text: "#6a1b9a" },
@@ -68,7 +69,6 @@ function blockPos(course) {
   };
 }
 
-// ── CreditBar (horizontal, pink) ─────────────────────────
 function CreditBar({ current, max }) {
   const pct = Math.min((current / max) * 100, 100);
   const over = current > max;
@@ -93,12 +93,11 @@ function CreditBar({ current, max }) {
   );
 }
 
-// ── Timetable Grid ────────────────────────────────────────
 function Grid({ selectedCourses, onRemove }) {
   const slots = Array.from({ length: TOTAL_HOURS + 1 }, (_, i) => HOUR_START + i);
   return (
     <div style={{ overflowX: "auto" }}>
-      <div style={{ display: "flex", paddingLeft: 64, marginBottom: 4 }}>
+      <div style={{ display: "flex", paddingLeft: 72, marginBottom: 4 }}>
         {slots.map(h => (
           <div key={h} style={{
             width: `${100 / TOTAL_HOURS}%`, flexShrink: 0,
@@ -109,19 +108,25 @@ function Grid({ selectedCourses, onRemove }) {
 
       {DAYS.map(day => {
         const courses = selectedCourses.filter(c => c.day === day);
-        const isWeekend = day === "SAT" || day === "SUN";
+        const isSun = day === "SUN";
+        const isSat = day === "SAT";
+        const isWeekend = isSun || isSat;
+        const rowBg = isSun ? P.sunBg : isSat ? P.satBg : P.rowBg;
+        const borderColor = isSun ? "#f0b8dd" : isSat ? P.borderMid : P.border;
         return (
           <div key={day} style={{ display: "flex", alignItems: "center", marginBottom: 4, height: 38 }}>
             <div style={{
-              width: 64, flexShrink: 0, fontSize: 11, textAlign: "right", paddingRight: 10,
-              color: isWeekend ? P.accentMid : P.textSecondary, fontWeight: isWeekend ? 600 : 400,
+              width: 72, flexShrink: 0, fontSize: 11, textAlign: "right", paddingRight: 10,
+              color: isSun ? "#c2185b" : isSat ? P.accentMid : P.textSecondary,
+              fontWeight: isWeekend ? 700 : 400,
             }}>
               {DAY_LABELS[day]}
+              {isSun && <span style={{ fontSize: 9, marginLeft: 3, color: P.accentMid }}>☀</span>}
             </div>
             <div style={{
               flex: 1, position: "relative", height: 30, borderRadius: 8,
-              background: isWeekend ? "#fef6fb" : P.rowBg,
-              border: `1px solid ${isWeekend ? P.borderMid : P.border}`,
+              background: rowBg,
+              border: `1px solid ${borderColor}`,
             }}>
               {Array.from({ length: TOTAL_HOURS - 1 }, (_, i) => (
                 <div key={i} style={{
@@ -172,7 +177,6 @@ function Grid({ selectedCourses, onRemove }) {
   );
 }
 
-// ── Selected panel ────────────────────────────────────────
 function SelectedPanel({ selectedCourses, onRemove, onClear, totalCredits }) {
   return (
     <div style={{
@@ -244,7 +248,6 @@ function SelectedPanel({ selectedCourses, onRemove, onClear, totalCredits }) {
   );
 }
 
-// ── Course Card ───────────────────────────────────────────
 function CourseCard({ course, isSelected, isConflict, onToggle }) {
   const pal = PALETTE[course.colorIndex];
   return (
@@ -277,7 +280,7 @@ function CourseCard({ course, isSelected, isConflict, onToggle }) {
               <span style={{
                 fontSize: 10, padding: "2px 5px", borderRadius: 4,
                 background: P.border, color: P.textSecondary,
-              }}>ปีรหัส {course.year}</span>
+              }}>ปี {course.year}</span>
             )}
           </div>
           <div style={{
@@ -322,25 +325,23 @@ function CourseCard({ course, isSelected, isConflict, onToggle }) {
   );
 }
 
-// ── Sample data ───────────────────────────────────────────
+// ── ข้อมูลตัวอย่าง (วันอาทิตย์มีวิชา) ────────────────────
 const SAMPLE_DATA = {
   courses: [
     { code: "04252211", name: "Electric Circuit Analysis I", sec: "1", day: "MON", start: "09:30", end: "12:30", instructor: "อ.สมชาย", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
-    { code: "04252211", name: "Electric Circuit Analysis I", sec: "2", day: "MON", start: "09:30", end: "12:30", instructor: "อ.สมหญิง", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
     { code: "04252214", name: "Digital System Design", sec: "1", day: "MON", start: "13:30", end: "16:30", instructor: "อ.วิทยา", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
     { code: "01355102", name: "English for University", sec: "9", day: "TUE", start: "13:30", end: "16:30", instructor: "อ.พิมพ์", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
     { code: "04253201", name: "Basic Principles of Mechanics", sec: "1", day: "WED", start: "09:30", end: "12:30", instructor: "อ.ณัฐ", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
     { code: "04252213", name: "Electric Circuit Lab", sec: "102", day: "THU", start: "13:30", end: "16:30", instructor: "อ.สมชาย", credit: 1, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
+    { code: "04252299", name: "Special Topics in EE", sec: "1", day: "SUN", start: "09:00", end: "12:00", instructor: "อ.ปิยวัฒน์", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
     { code: "01132222", name: "Human Resource Management", sec: "1", day: "MON", start: "09:30", end: "12:30", instructor: "อ.นัฐนันท์", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
     { code: "01101182", name: "Macroeconomics I", sec: "2", day: "MON", start: "13:30", end: "16:30", instructor: "อ.ฐิตาวรรณ", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
-    { code: "01130171", name: "Financial Accounting", sec: "2", day: "MON", start: "15:30", end: "18:30", instructor: "อ.วรวิทย์", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
     { code: "01132214", name: "Environment of Business", sec: "1", day: "WED", start: "13:30", end: "16:30", instructor: "อ.ธิดา", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
-    { code: "01455101", name: "Global Politics in Daily Life", sec: "2", day: "THU", start: "09:30", end: "12:30", instructor: "อ.ประสงค์", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
+    { code: "01455101", name: "Global Politics in Daily Life", sec: "2", day: "SUN", start: "13:00", end: "16:00", instructor: "อ.ประสงค์", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
     { code: "01131211", name: "Business Finance", sec: "1", day: "THU", start: "13:30", end: "16:30", instructor: "อ.ชัยรัตน์", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
-    { code: "04201222", name: "Laboratory in Organic Chemistry", sec: "101", day: "MON", start: "09:30", end: "12:30", instructor: "อ.กัลยา", credit: 1, year: "68", major_value: "B5801_B", major_label: "เคมีประยุกต์ (B5801) -ป.ตรี" },
-    { code: "04201221", name: "Organic Chemistry I", sec: "1", day: "WED", start: "13:30", end: "16:30", instructor: "อ.กัลยา", credit: 3, year: "68", major_value: "B5801_B", major_label: "เคมีประยุกต์ (B5801) -ป.ตรี" },
-    { code: "01418231", name: "Data Structures and Algorithms", sec: "1", day: "WED", start: "09:30", end: "12:30", instructor: "อ.ธีระ", credit: 3, year: "68", major_value: "B6001_B", major_label: "วิทยาการคอมพิวเตอร์ (B6001) -ป.ตรี" },
-    { code: "01418233", name: "Computer Architecture", sec: "1", day: "FRI", start: "13:30", end: "16:30", instructor: "อ.ประภัส", credit: 3, year: "68", major_value: "B6001_B", major_label: "วิทยาการคอมพิวเตอร์ (B6001) -ป.ตรี" },
+    { code: "01418231", name: "Data Structures and Algorithms", sec: "1", day: "WED", start: "09:30", end: "12:30", instructor: "อ.ธีระ", credit: 3, year: "67", major_value: "B6001_B", major_label: "วิทยาการคอมพิวเตอร์ (B6001) -ป.ตรี" },
+    { code: "01418233", name: "Computer Architecture", sec: "1", day: "FRI", start: "13:30", end: "16:30", instructor: "อ.ประภัส", credit: 3, year: "67", major_value: "B6001_B", major_label: "วิทยาการคอมพิวเตอร์ (B6001) -ป.ตรี" },
+    { code: "01418299", name: "Senior Project I", sec: "1", day: "SAT", start: "09:00", end: "12:00", instructor: "อ.ธีระ", credit: 3, year: "65", major_value: "B6001_B", major_label: "วิทยาการคอมพิวเตอร์ (B6001) -ป.ตรี" },
   ],
   majors: [
     { value: "B5602_B", label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
@@ -383,9 +384,40 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [filterMajor, setFilterMajor] = useState("");
   const [filterYear, setFilterYear] = useState("");
+  const [filterDay, setFilterDay] = useState("");
   const [jsonLoaded, setJsonLoaded] = useState(false);
   const [dataSource, setDataSource] = useState(SAMPLE_DATA);
+  const [showUpdatePanel, setShowUpdatePanel] = useState(false);
+  const [updateInput, setUpdateInput] = useState("");
+  const [updateError, setUpdateError] = useState("");
 
+  // ── auto-fetch public/all_timetables.json ตอน mount ──────
+  useEffect(() => {
+    fetch("/all_timetables.json")
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(raw => {
+        const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.courses) ? raw.courses : [];
+        if (arr.length === 0) throw new Error("ไม่พบข้อมูลรายวิชา");
+        const majors = Array.isArray(raw?.majors) ? raw.majors : (() => {
+          const m = new Map();
+          arr.forEach(e => {
+            const v = e.major_value ?? "", l = e.major_label ?? v;
+            if (v && !m.has(v)) m.set(v, { value: v, label: l });
+          });
+          return Array.from(m.values());
+        })();
+        setDataSource({ courses: arr, majors, std_year: raw?.std_year ?? "" });
+        setJsonLoaded(true);
+      })
+      .catch(() => {
+        // ไม่มีไฟล์หรือ fetch ล้มเหลว -> ใช้ SAMPLE_DATA ต่อไป (jsonLoaded = false)
+      });
+  }, []);
+
+  // โหลด JSON ครั้งแรก (manual paste/upload)
   function loadJSON(text) {
     try {
       const raw = JSON.parse(text);
@@ -404,11 +436,35 @@ export default function App() {
     } catch (e) { setLoadError(e.message); }
   }
 
+  // อัพเดทข้อมูล (แทนที่ข้อมูลเดิมทั้งหมด)
+  function updateJSON(text) {
+    try {
+      const raw = JSON.parse(text);
+      const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.courses) ? raw.courses : [];
+      if (arr.length === 0) throw new Error("ไม่พบข้อมูลรายวิชา");
+      const majors = Array.isArray(raw?.majors) ? raw.majors : (() => {
+        const m = new Map();
+        arr.forEach(e => {
+          const v = e.major_value ?? "", l = e.major_label ?? v;
+          if (v && !m.has(v)) m.set(v, { value: v, label: l });
+        });
+        return Array.from(m.values());
+      })();
+      // แทนที่ข้อมูลเดิมทั้งหมด
+      setDataSource({ courses: arr, majors, std_year: raw?.std_year ?? "" });
+      setSelected([]); setWarning(""); setUpdateError("");
+      setShowUpdatePanel(false); setUpdateInput("");
+      setJsonLoaded(true);
+    } catch (e) { setUpdateError(e.message); }
+  }
+
   const allCourses = useMemo(
     () => dataSource.courses.map((e, i) => normalizeCourse(e, i)).filter(c => c.valid),
     [dataSource]
   );
   const majors = dataSource.majors ?? [];
+
+  // สร้าง list ปีรหัส (sort มากไปน้อย)
   const years = useMemo(() => {
     const s = new Set(allCourses.map(c => c.year).filter(Boolean));
     return Array.from(s).sort((a, b) => b.localeCompare(a));
@@ -424,6 +480,7 @@ export default function App() {
     let list = allCourses;
     if (filterMajor) list = list.filter(c => c.majorValue === filterMajor);
     if (filterYear) list = list.filter(c => c.year === filterYear);
+    if (filterDay) list = list.filter(c => c.day === filterDay);
     if (query) {
       const q = query.toLowerCase();
       list = list.filter(c =>
@@ -434,7 +491,7 @@ export default function App() {
       );
     }
     return list;
-  }, [allCourses, filterMajor, filterYear, query]);
+  }, [allCourses, filterMajor, filterYear, filterDay, query]);
 
   function toggle(course) {
     if (selected.includes(course.id)) {
@@ -487,17 +544,76 @@ export default function App() {
               </div>
             </div>
           </div>
-          {selectedCourses.length > 0 && (
-            <span style={{ fontSize: 12, color: P.accent, fontWeight: 700 }}>
-              {selectedCourses.length} วิชา · {totalCredits} หน่วยกิต
-            </span>
-          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {selectedCourses.length > 0 && (
+              <span style={{ fontSize: 12, color: P.accent, fontWeight: 700 }}>
+                {selectedCourses.length} วิชา · {totalCredits} หน่วยกิต
+              </span>
+            )}
+            {/* ปุ่มอัพเดทข้อมูล */}
+            {jsonLoaded && (
+              <button
+                onClick={() => { setShowUpdatePanel(p => !p); setUpdateError(""); }}
+                style={{
+                  fontSize: 11, padding: "5px 12px", borderRadius: 8, cursor: "pointer",
+                  background: showUpdatePanel ? P.accent : P.accentLt,
+                  color: showUpdatePanel ? "#fff" : P.accent,
+                  border: `1px solid ${P.borderMid}`, fontWeight: 600,
+                  transition: "all .15s",
+                }}
+              >
+                {showUpdatePanel ? "✕ ปิด" : "↑ อัพเดทข้อมูล"}
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "16px 16px 48px" }}>
 
-        {/* JSON upload banner */}
+        {/* Panel อัพเดทข้อมูล (แทนที่ทั้งหมด) */}
+        {showUpdatePanel && (
+          <div style={{
+            background: "#fff3e0", border: `1px solid #ffcc02`, borderRadius: 12,
+            padding: "14px 16px", marginBottom: 16,
+          }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#e65100", marginBottom: 6 }}>
+              ↑ อัพเดทข้อมูลใหม่ (จะแทนที่ข้อมูลเดิมทั้งหมด)
+            </div>
+            <p style={{ fontSize: 11, color: "#795548", margin: "0 0 8px" }}>
+              วาง JSON ใหม่จาก bot_2.py ด้านล่าง — ข้อมูลเดิมทั้งหมดจะถูกแทนที่ทันที วิชาที่เลือกไว้จะถูกล้าง
+            </p>
+            <textarea
+              placeholder='วาง all_timetables.json ใหม่ตรงนี้...'
+              value={updateInput}
+              onChange={e => setUpdateInput(e.target.value)}
+              style={{
+                display: "block", width: "100%", padding: "8px 10px",
+                fontSize: 11, fontFamily: "monospace", borderRadius: 8,
+                border: `1px solid #ffcc80`, background: "#fffde7", resize: "vertical",
+                height: 72, boxSizing: "border-box", color: P.textPrimary, outline: "none",
+              }}
+            />
+            <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+              <button onClick={() => updateInput && updateJSON(updateInput)} style={{
+                padding: "5px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                background: "#e65100", color: "#fff", border: "none", cursor: "pointer",
+              }}>แทนที่ข้อมูลทั้งหมด</button>
+              <label style={{ cursor: "pointer", fontSize: 12, color: "#e65100", fontWeight: 600 }}>
+                หรืออัพโหลดไฟล์
+                <input type="file" accept=".json" style={{ display: "none" }} onChange={e => {
+                  const f = e.target.files[0]; if (!f) return;
+                  const r = new FileReader();
+                  r.onload = ev => updateJSON(ev.target.result);
+                  r.readAsText(f);
+                }} />
+              </label>
+              {updateError && <span style={{ fontSize: 11, color: "#e53935" }}>⚠ {updateError}</span>}
+            </div>
+          </div>
+        )}
+
+        {/* JSON upload banner (ครั้งแรก) */}
         {!jsonLoaded && (
           <div style={{
             background: P.accentLt, border: `1px solid ${P.borderMid}`, borderRadius: 12,
@@ -560,13 +676,18 @@ export default function App() {
           </div>
         )}
 
-        {/* Timetable grid card */}
+        {/* Timetable grid (วันอาทิตย์ขึ้นก่อน) */}
         <div style={{
           background: P.cardBg, borderRadius: 16, border: `1px solid ${P.border}`,
           padding: "16px 16px 12px", marginBottom: 16,
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-            <h2 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: P.textPrimary }}>ตารางเรียน</h2>
+            <h2 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: P.textPrimary }}>
+              ตารางเรียน
+              <span style={{ fontSize: 10, fontWeight: 400, color: P.textHint, marginLeft: 8 }}>
+                (☀ อาทิตย์–เสาร์)
+              </span>
+            </h2>
             {selectedCourses.length > 0 && (
               <button onClick={() => { setSelected([]); setWarning(""); }} style={{
                 background: "none", border: "none", cursor: "pointer",
@@ -605,6 +726,7 @@ export default function App() {
 
             {/* Filters */}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {/* กรองสาขา */}
               {majors.length > 1 && (
                 <select value={filterMajor} onChange={e => setFilterMajor(e.target.value)} style={{ ...selectStyle, maxWidth: 224 }}>
                   <option value="">ทุกสาขาวิชา</option>
@@ -615,14 +737,22 @@ export default function App() {
                   ))}
                 </select>
               )}
-              {years.length > 1 && (
+              {/* กรองชั้นปีรหัส */}
+              {years.length > 0 && (
                 <select value={filterYear} onChange={e => setFilterYear(e.target.value)} style={selectStyle}>
                   <option value="">ทุกปีรหัส</option>
                   {years.map(y => <option key={y} value={y}>ปีรหัส {y}</option>)}
                 </select>
               )}
-              {(filterMajor || filterYear) && (
-                <button onClick={() => { setFilterMajor(""); setFilterYear(""); }} style={{
+              {/* กรองวัน (วันอาทิตย์ขึ้นก่อน) */}
+              <select value={filterDay} onChange={e => setFilterDay(e.target.value)} style={selectStyle}>
+                <option value="">ทุกวัน</option>
+                {DAYS.map(d => (
+                  <option key={d} value={d}>{DAY_LABELS[d]}</option>
+                ))}
+              </select>
+              {(filterMajor || filterYear || filterDay) && (
+                <button onClick={() => { setFilterMajor(""); setFilterYear(""); setFilterDay(""); }} style={{
                   fontSize: 11, padding: "5px 10px", borderRadius: 8,
                   border: `1px solid ${P.border}`, background: "#fff",
                   color: P.textSecondary, cursor: "pointer",
