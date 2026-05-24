@@ -1,528 +1,672 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useMemo } from "react";
 
-// ─────────────────────────────────────────────────────────
-//  CONFIG
-// ─────────────────────────────────────────────────────────
 const MAX_CREDITS = 22;
-const HOUR_START  = 8;
-const HOUR_END    = 20;
+const HOUR_START = 8;
+const HOUR_END = 20;
 const TOTAL_HOURS = HOUR_END - HOUR_START;
 
 const DAYS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
 const DAY_LABELS = {
   MON: "จันทร์", TUE: "อังคาร", WED: "พุธ",
-  THU: "พฤหัสฯ",  FRI: "ศุกร์",  SAT: "เสาร์", SUN: "อาทิตย์",
+  THU: "พฤหัสฯ", FRI: "ศุกร์", SAT: "เสาร์", SUN: "อาทิตย์",
+};
+const DAY_SHORT = {
+  MON: "จ", TUE: "อ", WED: "พ", THU: "พฤ", FRI: "ศ", SAT: "ส", SUN: "อา",
 };
 
-const COLORS = [
-  { bg: "#dbeafe", border: "#3b82f6", text: "#1e40af" },
-  { bg: "#dcfce7", border: "#16a34a", text: "#14532d" },
-  { bg: "#fef9c3", border: "#ca8a04", text: "#713f12" },
-  { bg: "#fce7f3", border: "#db2777", text: "#831843" },
-  { bg: "#ede9fe", border: "#7c3aed", text: "#4c1d95" },
-  { bg: "#ffedd5", border: "#ea580c", text: "#7c2d12" },
-  { bg: "#cffafe", border: "#0891b2", text: "#164e63" },
-  { bg: "#f0fdf4", border: "#15803d", text: "#14532d" },
+// ── Pink-toned palette ───────────────────────────────────
+const P = {
+  pageBg:    "#fdf2f8",
+  cardBg:    "#ffffff",
+  headerBg:  "#ffffff",
+  border:    "#f5d0e8",
+  borderMid: "#e8a7cf",
+  rowBg:     "#fdf7fb",
+  gridLine:  "#f3d7ec",
+  accent:    "#c2185b",
+  accentLt:  "#fce4ec",
+  accentMid: "#e91e8c",
+  textPrimary:   "#3b1f2b",
+  textSecondary: "#9c6b83",
+  textHint:      "#d4a8c0",
+  warn:   "#fff8e1",
+  warnBorder: "#ffe082",
+  warnText:   "#795548",
+};
+
+// Course block colours — all in the pink/rose/mauve family
+const PALETTE = [
+  { bg: "#fce4ec", border: "#e91e8c", text: "#880e4f" },
+  { bg: "#fce4f7", border: "#ab47bc", text: "#6a1b9a" },
+  { bg: "#f3e5f5", border: "#7b1fa2", text: "#4a148c" },
+  { bg: "#ffe0f0", border: "#f06292", text: "#880e4f" },
+  { bg: "#ffeef8", border: "#ce93d8", text: "#6a1b9a" },
+  { bg: "#fde0f2", border: "#d81b60", text: "#880e4f" },
+  { bg: "#f8bbd0", border: "#c2185b", text: "#880e4f" },
+  { bg: "#f9f0fb", border: "#9c27b0", text: "#4a148c" },
+  { bg: "#fce8f3", border: "#ad1457", text: "#880e4f" },
+  { bg: "#ede7f6", border: "#673ab7", text: "#311b92" },
+  { bg: "#fff0f7", border: "#e040fb", text: "#6a1b9a" },
+  { bg: "#fdeef8", border: "#ba68c8", text: "#6a1b9a" },
 ];
 
-// ─────────────────────────────────────────────────────────
-//  HELPERS
-// ─────────────────────────────────────────────────────────
-const DAY_MAP = {
-  จ:"MON", อ:"TUE", พ:"WED", พฤ:"THU", ศ:"FRI", ส:"SAT", อา:"SUN",
-  MONDAY:"MON", TUESDAY:"TUE", WEDNESDAY:"WED",
-  THURSDAY:"THU", FRIDAY:"FRI", SATURDAY:"SAT", SUNDAY:"SUN",
-  MON:"MON", TUE:"TUE", WED:"WED", THU:"THU",
-  FRI:"FRI", SAT:"SAT", SUN:"SUN",
-};
-
-function toHHMM(raw) {
-  if (!raw) return "";
-  // รองรับ "9.30", "9:30", "930", "09:30"
-  const s = String(raw).trim();
-  // dot separator
-  let h, m;
-  if (s.includes(".")) {
-    [h, m] = s.split(".").map(Number);
-  } else if (s.includes(":")) {
-    [h, m] = s.split(":").map(Number);
-  } else if (s.length <= 4) {
-    // เช่น "930" หรือ "1030"
-    const n = parseInt(s);
-    h = Math.floor(n / 100);
-    m = n % 100;
-  } else {
-    return s;
-  }
-  if (isNaN(h) || isNaN(m)) return s;
-  return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
-}
-
 function parseTime(hhmm) {
-  if (!hhmm) return 0;
+  if (!hhmm) return null;
   const [h, m] = hhmm.split(":").map(Number);
   return h + (m || 0) / 60;
 }
-
-// Parse "MON 9.30-12.30" หรือ "จ 09:00-12:00"
-function parseDayTime(str) {
-  if (!str) return {};
-  const s = String(str).trim();
-
-  // ดึงช่วงเวลา: รองรับ dot และ colon
-  const timeRe = /(\d{1,2}[.:]\d{2})\s*[-–]\s*(\d{1,2}[.:]\d{2})/;
-  const tm = s.match(timeRe);
-  const start = tm ? toHHMM(tm[1]) : "";
-  const end   = tm ? toHHMM(tm[2]) : "";
-
-  // ดึงวัน: token แรก (ก่อน space หรือตัวเลข)
-  const firstToken = s.split(/[\s\d]/)[0].trim();
-  const day = DAY_MAP[firstToken.toUpperCase()] || DAY_MAP[firstToken] || "";
-
-  return { day, start, end };
+function hasConflict(a, b) {
+  if (a.day !== b.day || !a.start || !b.start) return false;
+  return parseTime(a.start) < parseTime(b.end) && parseTime(b.start) < parseTime(a.end);
 }
-
-function normalizeCourse(entry, index) {
-  // code — ตัด suffix ปีการศึกษา เช่น "04252211-65" → "04252211"
-  const rawCode = String(
-    entry.code ?? entry.subject_code ?? entry.รหัสวิชา ?? ""
-  );
-  const code = rawCode.replace(/-\d{2,4}$/, "").trim();
-
-  const name       = String(entry.name ?? entry.subject_name ?? entry.ชื่อวิชา ?? "");
-  const sec        = String(entry.sec  ?? entry.section      ?? entry.หมู่ ?? "1");
-  const instructor = String(entry.instructor ?? entry.teacher ?? entry.อาจารย์ ?? "");
-  const creditRaw  = entry.credit ?? entry.credits ?? entry.หน่วยกิต;
-  const credit     = creditRaw != null ? Number(creditRaw) : 3;
-
-  // เวลา — รองรับ field แยก หรือ day_time รวม
-  let day   = String(entry.day   ?? "");
-  let start = String(entry.start ?? "");
-  let end   = String(entry.end   ?? "");
-
-  // normalize วัน (ถ้ามีอยู่แล้วแต่เป็น Thai / lowercase)
-  if (day) day = DAY_MAP[day.toUpperCase()] || DAY_MAP[day] || day;
-
-  // parse จาก day_time ถ้ายังขาด
-  if (!day || !start || !end) {
-    const dt = entry.day_time ?? entry.dayTime ?? entry.วันเวลา ?? "";
-    if (dt) {
-      const parsed = parseDayTime(String(dt));
-      if (!day   && parsed.day)   day   = parsed.day;
-      if (!start && parsed.start) start = parsed.start;
-      if (!end   && parsed.end)   end   = parsed.end;
-    }
-  }
-
-  // normalize เวลา
-  start = toHHMM(start);
-  end   = toHHMM(end);
-
+function blockPos(course) {
+  const s = parseTime(course.start), e = parseTime(course.end);
+  if (!s || !e) return null;
   return {
-    _raw: entry,           // ไว้ debug
-    id: `${code}_${sec}_${index}`,
-    code, name, sec, day, start, end, credit, instructor,
-    colorIndex: index % COLORS.length,
+    left: `${((s - HOUR_START) / TOTAL_HOURS) * 100}%`,
+    width: `${((e - s) / TOTAL_HOURS) * 100}%`,
   };
 }
 
-function normalizeCourses(raw) {
-  const arr = Array.isArray(raw) ? raw
-    : Array.isArray(raw?.courses) ? raw.courses
-    : [];
-  return arr.map((e, i) => normalizeCourse(e, i));
-}
-
-function hasConflict(a, b) {
-  if (a.day !== b.day) return false;
-  return parseTime(a.start) < parseTime(b.end) &&
-         parseTime(b.start) < parseTime(a.end);
-}
-
-function blockStyle(course) {
-  const left  = ((parseTime(course.start) - HOUR_START) / TOTAL_HOURS) * 100;
-  const width = ((parseTime(course.end) - parseTime(course.start)) / TOTAL_HOURS) * 100;
-  const c = COLORS[course.colorIndex ?? 0];
-  return { left: `${left}%`, width: `${width}%`, bg: c.bg, border: c.border, text: c.text };
-}
-
-// ─────────────────────────────────────────────────────────
-//  SUB-COMPONENTS
-// ─────────────────────────────────────────────────────────
-function Skeleton() {
-  return (
-    <div className="animate-pulse border border-gray-100 rounded-xl p-4 space-y-2">
-      <div className="h-3 bg-gray-100 rounded w-1/4" />
-      <div className="h-4 bg-gray-100 rounded w-3/4" />
-      <div className="h-3 bg-gray-100 rounded w-1/2" />
-    </div>
-  );
-}
-
+// ── CreditBar (horizontal, pink) ─────────────────────────
 function CreditBar({ current, max }) {
-  const pct   = Math.min((current / max) * 100, 100);
-  const color = current > max ? "#ef4444" : current >= max * 0.8 ? "#f59e0b" : "#22c55e";
+  const pct = Math.min((current / max) * 100, 100);
+  const over = current > max;
+  const barColor = over ? "#e53935" : current >= max * 0.8 ? "#f06292" : P.accentMid;
   return (
-    <div className="space-y-1">
-      <div className="flex justify-between text-xs text-gray-500">
-        <span>หน่วยกิตรวม</span>
-        <span className="font-semibold" style={{ color: current > max ? "#ef4444" : "#374151" }}>
-          {current} / {max}
-        </span>
-      </div>
-      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-        <div className="h-full rounded-full transition-all duration-300"
-             style={{ width: `${pct}%`, backgroundColor: color }} />
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+          <span style={{ fontSize: 11, color: P.textSecondary, fontWeight: 500 }}>หน่วยกิตรวม</span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: over ? "#e53935" : P.textPrimary }}>
+            {current}<span style={{ fontWeight: 400, color: P.textHint }}>/{max}</span>
+          </span>
+        </div>
+        <div style={{ height: 6, borderRadius: 99, background: P.border, overflow: "hidden" }}>
+          <div style={{
+            height: "100%", borderRadius: 99, background: barColor, width: `${pct}%`,
+            transition: "width .35s ease",
+          }} />
+        </div>
       </div>
     </div>
   );
 }
 
-// Debug panel — แสดงเฉพาะตอน JSON มีปัญหา
-function DebugPanel({ all }) {
-  const invalid = all.filter(c => !c.day || !c.start || !c.end);
-  if (invalid.length === 0) return null;
+// ── Timetable Grid ────────────────────────────────────────
+function Grid({ selectedCourses, onRemove }) {
+  const slots = Array.from({ length: TOTAL_HOURS + 1 }, (_, i) => HOUR_START + i);
   return (
-    <details className="border border-amber-200 bg-amber-50 rounded-xl p-4 text-xs">
-      <summary className="cursor-pointer font-semibold text-amber-700 select-none">
-        ⚠ วิชาที่ parse ไม่สมบูรณ์ ({invalid.length} รายการ) — คลิกเพื่อดู
-      </summary>
-      <div className="mt-3 space-y-1 font-mono text-amber-800 max-h-48 overflow-y-auto">
-        {invalid.map((c, i) => (
-          <div key={i} className="border-b border-amber-100 pb-1">
-            <span className="font-bold">{c.code || "(ไม่มีรหัส)"}</span>
-            {" · day="}
-            <span className={c.day ? "text-green-700" : "text-red-600 font-bold"}>{c.day || "❌"}</span>
-            {" start="}
-            <span className={c.start ? "text-green-700" : "text-red-600 font-bold"}>{c.start || "❌"}</span>
-            {" · raw="}
-            <span className="text-gray-500">{JSON.stringify(c._raw).slice(0, 80)}</span>
-          </div>
+    <div style={{ overflowX: "auto" }}>
+      <div style={{ display: "flex", paddingLeft: 64, marginBottom: 4 }}>
+        {slots.map(h => (
+          <div key={h} style={{
+            width: `${100 / TOTAL_HOURS}%`, flexShrink: 0,
+            fontSize: 10, color: P.textHint, textAlign: "center",
+          }}>{String(h).padStart(2, "0")}:00</div>
         ))}
       </div>
-    </details>
+
+      {DAYS.map(day => {
+        const courses = selectedCourses.filter(c => c.day === day);
+        const isWeekend = day === "SAT" || day === "SUN";
+        return (
+          <div key={day} style={{ display: "flex", alignItems: "center", marginBottom: 4, height: 38 }}>
+            <div style={{
+              width: 64, flexShrink: 0, fontSize: 11, textAlign: "right", paddingRight: 10,
+              color: isWeekend ? P.accentMid : P.textSecondary, fontWeight: isWeekend ? 600 : 400,
+            }}>
+              {DAY_LABELS[day]}
+            </div>
+            <div style={{
+              flex: 1, position: "relative", height: 30, borderRadius: 8,
+              background: isWeekend ? "#fef6fb" : P.rowBg,
+              border: `1px solid ${isWeekend ? P.borderMid : P.border}`,
+            }}>
+              {Array.from({ length: TOTAL_HOURS - 1 }, (_, i) => (
+                <div key={i} style={{
+                  position: "absolute", top: 0, height: "100%",
+                  left: `${((i + 1) / TOTAL_HOURS) * 100}%`,
+                  borderLeft: `1px solid ${P.gridLine}`,
+                }} />
+              ))}
+              {courses.map(c => {
+                const pos = blockPos(c);
+                if (!pos) return null;
+                const pal = PALETTE[c.colorIndex];
+                return (
+                  <div
+                    key={c.id}
+                    onClick={() => onRemove(c)}
+                    title={`${c.name} | หมู่ ${c.sec}${c.instructor !== "-" ? " | " + c.instructor : ""} | ${c.start}–${c.end}`}
+                    style={{
+                      position: "absolute", top: 3, bottom: 3,
+                      left: pos.left, width: pos.width,
+                      borderRadius: 5, padding: "0 6px",
+                      background: pal.bg, border: `1.5px solid ${pal.border}`,
+                      color: pal.text, fontSize: 10, fontWeight: 700,
+                      display: "flex", alignItems: "center", overflow: "hidden",
+                      cursor: "pointer", whiteSpace: "nowrap",
+                      transition: "opacity .1s",
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.opacity = "0.7"}
+                    onMouseLeave={e => e.currentTarget.style.opacity = "1"}
+                  >
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {c.code}<span style={{ opacity: 0.55, marginLeft: 3 }}>#{c.sec}</span>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+
+      {selectedCourses.length === 0 && (
+        <p style={{ textAlign: "center", fontSize: 11, color: P.textHint, padding: "4px 0 0" }}>
+          เลือกวิชาจากรายการด้านล่างเพื่อแสดงในตาราง
+        </p>
+      )}
+    </div>
   );
 }
 
-// ─────────────────────────────────────────────────────────
-//  MAIN APP
-// ─────────────────────────────────────────────────────────
-export default function App() {
-  const [allCourses, setAllCourses] = useState([]);    // normalized (including invalid)
-  const [selected,   setSelected]   = useState([]);    // course ids
-  const [loading,    setLoading]    = useState(true);
-  const [error,      setError]      = useState("");
-  const [warning,    setWarning]    = useState("");
-  const [query,      setQuery]      = useState("");
-
-  // ── Load JSON ──────────────────────────────────────────
-  useEffect(() => {
-    fetch("/all_timetables.json")
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
-      .then(raw => {
-        const normalized = normalizeCourses(raw);
-        console.log("[Timetable] loaded:", normalized.length, "entries");
-        const invalid = normalized.filter(c => !c.day || !c.start || !c.end);
-        if (invalid.length) {
-          console.warn("[Timetable] invalid entries:", invalid.length);
-          invalid.slice(0, 3).forEach(c => console.warn("  →", c._raw));
-        }
-        setAllCourses(normalized);
-        setLoading(false);
-      })
-      .catch(err => {
-        setError(err.message);
-        setLoading(false);
-      });
-  }, []);
-
-  // ── Derived ────────────────────────────────────────────
-  const validCourses = useMemo(
-    () => allCourses.filter(c => c.code && c.day && c.start && c.end),
-    [allCourses]
-  );
-
-  const selectedCourses = useMemo(
-    () => validCourses.filter(c => selected.includes(c.id)),
-    [validCourses, selected]
-  );
-
-  const totalCredits = useMemo(
-    () => selectedCourses.reduce((s, c) => s + c.credit, 0),
-    [selectedCourses]
-  );
-
-  const filtered = useMemo(() => {
-    const q = query.toLowerCase();
-    if (!q) return validCourses;
-    return validCourses.filter(c =>
-      c.code.toLowerCase().includes(q) ||
-      c.name.toLowerCase().includes(q) ||
-      c.instructor.toLowerCase().includes(q)
-    );
-  }, [validCourses, query]);
-
-  // ── Toggle ─────────────────────────────────────────────
-  function toggle(course) {
-    if (selected.includes(course.id)) {
-      setSelected(p => p.filter(id => id !== course.id));
-      setWarning("");
-      return;
-    }
-    if (totalCredits + course.credit > MAX_CREDITS) {
-      setWarning(`หน่วยกิตเกิน ${MAX_CREDITS} (${totalCredits + course.credit} หน่วย)`);
-      return;
-    }
-    const conflict = selectedCourses.find(
-      c => c.id !== course.id && hasConflict(c, course)
-    );
-    if (conflict) {
-      setWarning(`เวลาชนกับ ${conflict.name}`);
-      return;
-    }
-    setSelected(p => [...p, course.id]);
-    setWarning("");
-  }
-
-  // ── Time header ────────────────────────────────────────
-  const timeSlots = Array.from(
-    { length: TOTAL_HOURS + 1 },
-    (_, i) => `${String(HOUR_START + i).padStart(2, "0")}:00`
-  );
-
-  // ─────────────────────────────────────────────────────────
-  //  RENDER
-  // ─────────────────────────────────────────────────────────
+// ── Selected panel ────────────────────────────────────────
+function SelectedPanel({ selectedCourses, onRemove, onClear, totalCredits }) {
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div style={{
+      background: P.cardBg, borderRadius: 16, border: `1px solid ${P.border}`,
+      padding: 18, display: "flex", flexDirection: "column", gap: 14,
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h2 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: P.textPrimary }}>วิชาที่เลือก</h2>
+        {selectedCourses.length > 0 && (
+          <button onClick={onClear} style={{
+            background: "none", border: "none", cursor: "pointer",
+            fontSize: 11, color: P.textHint, padding: 0,
+          }}
+            onMouseEnter={e => e.currentTarget.style.color = "#e53935"}
+            onMouseLeave={e => e.currentTarget.style.color = P.textHint}
+          >ล้างทั้งหมด</button>
+        )}
+      </div>
 
-      {/* ── Header ── */}
-      <header className="bg-white border-b border-gray-100 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center">
-              <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round"
-                  d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-            </div>
-            <span className="font-semibold text-gray-900 text-sm">Timetable Builder</span>
-          </div>
-          <div className="text-xs text-gray-400">
-            {selectedCourses.length > 0 && (
-              <span className="text-blue-600 font-semibold">{selectedCourses.length} วิชา · {totalCredits} หน่วยกิต</span>
+      <CreditBar current={totalCredits} max={MAX_CREDITS} />
+
+      {selectedCourses.length === 0 ? (
+        <p style={{ fontSize: 12, color: P.textHint, textAlign: "center", padding: "16px 0", margin: 0 }}>
+          กดเลือกวิชาจากรายการด้านขวา
+        </p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 7, maxHeight: 340, overflowY: "auto" }}>
+          {selectedCourses.map(c => {
+            const pal = PALETTE[c.colorIndex];
+            return (
+              <div key={c.id} style={{
+                borderRadius: 10, padding: "8px 10px",
+                background: pal.bg, border: `1px solid ${pal.border}40`,
+                display: "flex", alignItems: "flex-start", gap: 8,
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2 }}>
+                    <span style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: pal.border }}>
+                      {c.code}
+                    </span>
+                    <span style={{
+                      fontSize: 10, fontWeight: 600, padding: "1px 5px", borderRadius: 3,
+                      background: pal.border + "25", color: pal.text,
+                    }}>หมู่ {c.sec}</span>
+                  </div>
+                  <div style={{
+                    fontSize: 12, fontWeight: 600, color: P.textPrimary,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 2,
+                  }}>{c.name}</div>
+                  <div style={{ fontSize: 10, color: P.textSecondary, display: "flex", gap: 5, flexWrap: "wrap" }}>
+                    <span>{DAY_LABELS[c.day] ?? c.day} {c.start}–{c.end}</span>
+                    {c.instructor !== "-" && <span>· {c.instructor}</span>}
+                    <span>· {c.credit} หน่วย</span>
+                  </div>
+                </div>
+                <button onClick={() => onRemove(c)} style={{
+                  background: "none", border: "none", cursor: "pointer",
+                  color: P.textHint, fontSize: 14, lineHeight: 1, flexShrink: 0, padding: "1px 2px",
+                }}
+                  onMouseEnter={e => e.currentTarget.style.color = "#e53935"}
+                  onMouseLeave={e => e.currentTarget.style.color = P.textHint}
+                >✕</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Course Card ───────────────────────────────────────────
+function CourseCard({ course, isSelected, isConflict, onToggle }) {
+  const pal = PALETTE[course.colorIndex];
+  return (
+    <div
+      onClick={() => !isConflict && onToggle(course)}
+      style={{
+        border: isSelected ? `1.5px solid ${pal.border}` : `1px solid ${P.border}`,
+        borderRadius: 12, padding: "10px 12px",
+        background: isSelected ? pal.bg : P.cardBg,
+        cursor: isConflict ? "not-allowed" : "pointer",
+        opacity: isConflict ? 0.32 : 1,
+        transition: "border-color .1s, background .1s",
+        userSelect: "none",
+      }}
+      onMouseEnter={e => { if (!isConflict && !isSelected) e.currentTarget.style.borderColor = P.borderMid; }}
+      onMouseLeave={e => { if (!isSelected) e.currentTarget.style.borderColor = P.border; }}
+    >
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 3 }}>
+            <span style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 700, color: pal.border }}>
+              {course.code}
+            </span>
+            <span style={{
+              fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 4,
+              background: isSelected ? pal.border : P.accentLt,
+              color: isSelected ? "#fff" : P.accent,
+            }}>หมู่ {course.sec}</span>
+            {course.year && (
+              <span style={{
+                fontSize: 10, padding: "2px 5px", borderRadius: 4,
+                background: P.border, color: P.textSecondary,
+              }}>ปีรหัส {course.year}</span>
             )}
           </div>
+          <div style={{
+            fontSize: 13, fontWeight: 600, color: P.textPrimary,
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginBottom: 3,
+          }}>{course.name}</div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {course.start && (
+              <span style={{ fontSize: 11, color: P.textSecondary, display: "flex", alignItems: "center", gap: 3 }}>
+                <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2}>
+                  <circle cx={12} cy={12} r={10} /><polyline points="12 6 12 12 16 14" />
+                </svg>
+                {DAY_SHORT[course.day] ?? course.day} · {course.start}–{course.end}
+              </span>
+            )}
+            {course.instructor && course.instructor !== "-" && (
+              <span style={{ fontSize: 11, color: P.textHint, display: "flex", alignItems: "center", gap: 3 }}>
+                <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2}>
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx={12} cy={7} r={4} />
+                </svg>
+                {course.instructor}
+              </span>
+            )}
+          </div>
+          {course.majorLabel && (
+            <div style={{ fontSize: 10, color: P.textHint, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {course.majorLabel}
+            </div>
+          )}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5, flexShrink: 0 }}>
+          <span style={{ fontSize: 11, color: P.textHint }}>{course.credit} หน่วย</span>
+          <div style={{
+            width: 16, height: 16, borderRadius: "50%", border: `2px solid ${pal.border}`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            {isSelected && <div style={{ width: 8, height: 8, borderRadius: "50%", background: pal.border }} />}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Sample data ───────────────────────────────────────────
+const SAMPLE_DATA = {
+  courses: [
+    { code: "04252211", name: "Electric Circuit Analysis I", sec: "1", day: "MON", start: "09:30", end: "12:30", instructor: "อ.สมชาย", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
+    { code: "04252211", name: "Electric Circuit Analysis I", sec: "2", day: "MON", start: "09:30", end: "12:30", instructor: "อ.สมหญิง", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
+    { code: "04252214", name: "Digital System Design", sec: "1", day: "MON", start: "13:30", end: "16:30", instructor: "อ.วิทยา", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
+    { code: "01355102", name: "English for University", sec: "9", day: "TUE", start: "13:30", end: "16:30", instructor: "อ.พิมพ์", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
+    { code: "04253201", name: "Basic Principles of Mechanics", sec: "1", day: "WED", start: "09:30", end: "12:30", instructor: "อ.ณัฐ", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
+    { code: "04252213", name: "Electric Circuit Lab", sec: "102", day: "THU", start: "13:30", end: "16:30", instructor: "อ.สมชาย", credit: 1, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
+    { code: "01132222", name: "Human Resource Management", sec: "1", day: "MON", start: "09:30", end: "12:30", instructor: "อ.นัฐนันท์", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
+    { code: "01101182", name: "Macroeconomics I", sec: "2", day: "MON", start: "13:30", end: "16:30", instructor: "อ.ฐิตาวรรณ", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
+    { code: "01130171", name: "Financial Accounting", sec: "2", day: "MON", start: "15:30", end: "18:30", instructor: "อ.วรวิทย์", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
+    { code: "01132214", name: "Environment of Business", sec: "1", day: "WED", start: "13:30", end: "16:30", instructor: "อ.ธิดา", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
+    { code: "01455101", name: "Global Politics in Daily Life", sec: "2", day: "THU", start: "09:30", end: "12:30", instructor: "อ.ประสงค์", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
+    { code: "01131211", name: "Business Finance", sec: "1", day: "THU", start: "13:30", end: "16:30", instructor: "อ.ชัยรัตน์", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
+    { code: "04201222", name: "Laboratory in Organic Chemistry", sec: "101", day: "MON", start: "09:30", end: "12:30", instructor: "อ.กัลยา", credit: 1, year: "68", major_value: "B5801_B", major_label: "เคมีประยุกต์ (B5801) -ป.ตรี" },
+    { code: "04201221", name: "Organic Chemistry I", sec: "1", day: "WED", start: "13:30", end: "16:30", instructor: "อ.กัลยา", credit: 3, year: "68", major_value: "B5801_B", major_label: "เคมีประยุกต์ (B5801) -ป.ตรี" },
+    { code: "01418231", name: "Data Structures and Algorithms", sec: "1", day: "WED", start: "09:30", end: "12:30", instructor: "อ.ธีระ", credit: 3, year: "68", major_value: "B6001_B", major_label: "วิทยาการคอมพิวเตอร์ (B6001) -ป.ตรี" },
+    { code: "01418233", name: "Computer Architecture", sec: "1", day: "FRI", start: "13:30", end: "16:30", instructor: "อ.ประภัส", credit: 3, year: "68", major_value: "B6001_B", major_label: "วิทยาการคอมพิวเตอร์ (B6001) -ป.ตรี" },
+  ],
+  majors: [
+    { value: "B5602_B", label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
+    { value: "C5101_B", label: "การจัดการ (C5101) -ป.ตรี" },
+    { value: "B5801_B", label: "เคมีประยุกต์ (B5801) -ป.ตรี" },
+    { value: "B6001_B", label: "วิทยาการคอมพิวเตอร์ (B6001) -ป.ตรี" },
+  ],
+  std_year: "68",
+};
+
+function normalizeCourse(entry, index) {
+  const code = String(entry.code ?? entry.subject_code ?? "").replace(/-\d{2,4}$/, "").trim();
+  const name = String(entry.name ?? entry.subject_name ?? "(ไม่มีชื่อ)");
+  const sec = String(entry.sec ?? entry.section ?? "1");
+  const instructor = String(entry.instructor ?? entry.teacher ?? "-");
+  const credit = Number(entry.credit ?? entry.credits ?? 3);
+  const year = String(entry.year ?? "");
+  const majorValue = String(entry.major_value ?? "");
+  const majorLabel = String(entry.major_label ?? "");
+  const day = String(entry.day ?? "");
+  const start = String(entry.start ?? "");
+  const end = String(entry.end ?? "");
+  const valid = !!(code && day && start && end);
+  return {
+    _raw: entry,
+    id: `${code}_${sec}_${day}_${index}`,
+    code, name, sec, day, start, end, credit,
+    instructor, year, majorValue, majorLabel,
+    colorIndex: index % PALETTE.length,
+    valid,
+  };
+}
+
+// ── MAIN APP ──────────────────────────────────────────────
+export default function App() {
+  const [rawInput, setRawInput] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [selected, setSelected] = useState([]);
+  const [warning, setWarning] = useState("");
+  const [query, setQuery] = useState("");
+  const [filterMajor, setFilterMajor] = useState("");
+  const [filterYear, setFilterYear] = useState("");
+  const [jsonLoaded, setJsonLoaded] = useState(false);
+  const [dataSource, setDataSource] = useState(SAMPLE_DATA);
+
+  function loadJSON(text) {
+    try {
+      const raw = JSON.parse(text);
+      const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.courses) ? raw.courses : [];
+      if (arr.length === 0) throw new Error("ไม่พบข้อมูลรายวิชา");
+      const majors = Array.isArray(raw?.majors) ? raw.majors : (() => {
+        const m = new Map();
+        arr.forEach(e => {
+          const v = e.major_value ?? "", l = e.major_label ?? v;
+          if (v && !m.has(v)) m.set(v, { value: v, label: l });
+        });
+        return Array.from(m.values());
+      })();
+      setDataSource({ courses: arr, majors, std_year: raw?.std_year ?? "" });
+      setSelected([]); setWarning(""); setLoadError(""); setJsonLoaded(true);
+    } catch (e) { setLoadError(e.message); }
+  }
+
+  const allCourses = useMemo(
+    () => dataSource.courses.map((e, i) => normalizeCourse(e, i)).filter(c => c.valid),
+    [dataSource]
+  );
+  const majors = dataSource.majors ?? [];
+  const years = useMemo(() => {
+    const s = new Set(allCourses.map(c => c.year).filter(Boolean));
+    return Array.from(s).sort((a, b) => b.localeCompare(a));
+  }, [allCourses]);
+
+  const selectedCourses = useMemo(
+    () => allCourses.filter(c => selected.includes(c.id)),
+    [allCourses, selected]
+  );
+  const totalCredits = selectedCourses.reduce((s, c) => s + c.credit, 0);
+
+  const filtered = useMemo(() => {
+    let list = allCourses;
+    if (filterMajor) list = list.filter(c => c.majorValue === filterMajor);
+    if (filterYear) list = list.filter(c => c.year === filterYear);
+    if (query) {
+      const q = query.toLowerCase();
+      list = list.filter(c =>
+        c.code.toLowerCase().includes(q) ||
+        c.name.toLowerCase().includes(q) ||
+        c.instructor.toLowerCase().includes(q) ||
+        c.sec.includes(q)
+      );
+    }
+    return list;
+  }, [allCourses, filterMajor, filterYear, query]);
+
+  function toggle(course) {
+    if (selected.includes(course.id)) {
+      setSelected(p => p.filter(id => id !== course.id)); setWarning(""); return;
+    }
+    if (totalCredits + course.credit > MAX_CREDITS) {
+      setWarning(`หน่วยกิตเกิน ${MAX_CREDITS} (จะเป็น ${totalCredits + course.credit} หน่วย)`); return;
+    }
+    const conflict = selectedCourses.find(c => hasConflict(c, course));
+    if (conflict) { setWarning(`เวลาชนกับ ${conflict.name} หมู่ ${conflict.sec}`); return; }
+    setSelected(p => [...p, course.id]); setWarning("");
+  }
+
+  const selectStyle = {
+    fontSize: 12, padding: "5px 10px", borderRadius: 8,
+    border: `1px solid ${P.border}`, background: "#fff",
+    color: P.textPrimary, cursor: "pointer",
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: P.pageBg, fontFamily: "'Noto Sans Thai', sans-serif" }}>
+
+      {/* Header */}
+      <header style={{
+        background: P.headerBg, borderBottom: `1px solid ${P.border}`,
+        position: "sticky", top: 0, zIndex: 20,
+      }}>
+        <div style={{
+          maxWidth: 1200, margin: "0 auto", padding: "0 16px",
+          height: 52, display: "flex", alignItems: "center", justifyContent: "space-between",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{
+              width: 30, height: 30, borderRadius: 8, background: P.accent,
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2}>
+                <rect x={3} y={4} width={18} height={18} rx={2} />
+                <line x1={16} y1={2} x2={16} y2={6} />
+                <line x1={8} y1={2} x2={8} y2={6} />
+                <line x1={3} y1={10} x2={21} y2={10} />
+              </svg>
+            </div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: P.textPrimary, lineHeight: 1.1 }}>
+                Timetable Builder
+              </div>
+              <div style={{ fontSize: 10, color: P.textHint }}>
+                มก.ฉกส. {jsonLoaded ? `· ${allCourses.length.toLocaleString()} รายวิชา` : "· ตัวอย่างข้อมูล"}
+              </div>
+            </div>
+          </div>
+          {selectedCourses.length > 0 && (
+            <span style={{ fontSize: 12, color: P.accent, fontWeight: 700 }}>
+              {selectedCourses.length} วิชา · {totalCredits} หน่วยกิต
+            </span>
+          )}
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-4 py-5 space-y-4">
+      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "16px 16px 48px" }}>
 
-        {/* ── Warning ── */}
-        {warning && (
-          <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-sm text-amber-800">
-            <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round"
-                d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+        {/* JSON upload banner */}
+        {!jsonLoaded && (
+          <div style={{
+            background: P.accentLt, border: `1px solid ${P.borderMid}`, borderRadius: 12,
+            padding: "12px 16px", marginBottom: 16, display: "flex", gap: 10, alignItems: "flex-start",
+          }}>
+            <svg style={{ flexShrink: 0, marginTop: 1 }} width={17} height={17} viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth={2}>
+              <circle cx={12} cy={12} r={10} /><line x1={12} y1={8} x2={12} y2={12} /><line x1={12} y1={16} x2={12.01} y2={16} />
             </svg>
-            <span className="flex-1">{warning}</span>
-            <button onClick={() => setWarning("")} className="text-amber-500 hover:text-amber-700 font-medium">✕</button>
+            <div style={{ flex: 1, fontSize: 12, color: P.accent }}>
+              <strong>กำลังใช้ข้อมูลตัวอย่าง</strong> — วางเนื้อหา{" "}
+              <code style={{ background: "#fff", padding: "1px 5px", borderRadius: 3 }}>all_timetables.json</code>{" "}
+              ลงในช่องด้านล่าง
+              <textarea
+                placeholder='วาง JSON ที่ได้จาก bot_2.py ตรงนี้ แล้วกด "โหลดข้อมูล"...'
+                value={rawInput}
+                onChange={e => setRawInput(e.target.value)}
+                style={{
+                  display: "block", width: "100%", marginTop: 8, padding: "8px 10px",
+                  fontSize: 11, fontFamily: "monospace", borderRadius: 8,
+                  border: `1px solid ${P.borderMid}`, background: "#fff", resize: "vertical",
+                  height: 68, boxSizing: "border-box", color: P.textPrimary, outline: "none",
+                }}
+              />
+              <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+                <button onClick={() => rawInput && loadJSON(rawInput)} style={{
+                  padding: "5px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                  background: P.accent, color: "#fff", border: "none", cursor: "pointer",
+                }}>โหลดข้อมูล</button>
+                <label style={{ cursor: "pointer", fontSize: 12, color: P.accentMid, fontWeight: 600 }}>
+                  หรืออัพโหลดไฟล์
+                  <input type="file" accept=".json" style={{ display: "none" }} onChange={e => {
+                    const f = e.target.files[0]; if (!f) return;
+                    const r = new FileReader();
+                    r.onload = ev => loadJSON(ev.target.result);
+                    r.readAsText(f);
+                  }} />
+                </label>
+                {loadError && <span style={{ fontSize: 11, color: "#e53935" }}>⚠ {loadError}</span>}
+              </div>
+            </div>
           </div>
         )}
 
-        {/* ── Debug Panel ── */}
-        {!loading && !error && <DebugPanel all={allCourses} />}
-
-        {/* ── Timetable Grid ── */}
-        <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-          <div className="px-5 pt-4 pb-2">
-            <h2 className="text-sm font-semibold text-gray-700">ตารางเรียน</h2>
+        {/* Warning */}
+        {warning && (
+          <div style={{
+            background: P.warn, border: `1px solid ${P.warnBorder}`, borderRadius: 10,
+            padding: "8px 12px", marginBottom: 12,
+            display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: P.warnText,
+          }}>
+            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ flexShrink: 0 }}>
+              <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+              <line x1={12} y1={9} x2={12} y2={13} /><line x1={12} y1={17} x2={12.01} y2={17} />
+            </svg>
+            <span style={{ flex: 1 }}>{warning}</span>
+            <button onClick={() => setWarning("")} style={{
+              background: "none", border: "none", cursor: "pointer",
+              color: P.warnText, fontSize: 15, lineHeight: 1, padding: 0, opacity: 0.6,
+            }}>✕</button>
           </div>
-          <div className="px-4 pb-4 overflow-x-auto">
-            {/* time header */}
-            <div className="flex mb-1 pl-[72px]">
-              {timeSlots.map(t => (
-                <div key={t} className="text-[10px] text-gray-300 text-center select-none"
-                     style={{ width: `${100 / TOTAL_HOURS}%` }}>
-                  {t}
-                </div>
-              ))}
-            </div>
-            {/* day rows */}
-            {DAYS.map(day => {
-              const dayCourses = selectedCourses.filter(c => c.day === day);
-              return (
-                <div key={day} className="flex items-center mb-[3px] h-10">
-                  <div className="w-[72px] shrink-0 text-xs text-gray-400 text-right pr-3 select-none">
-                    {DAY_LABELS[day]}
-                  </div>
-                  <div className="relative flex-1 h-8 rounded-lg overflow-hidden"
-                       style={{ backgroundColor: "#f8fafc" }}>
-                    {/* grid lines */}
-                    {Array.from({ length: TOTAL_HOURS - 1 }, (_, i) => (
-                      <div key={i} className="absolute top-0 h-full"
-                           style={{
-                             left: `${((i + 1) / TOTAL_HOURS) * 100}%`,
-                             borderLeft: "1px solid #e2e8f0",
-                           }} />
-                    ))}
-                    {/* course blocks */}
-                    {dayCourses.map(c => {
-                      const s = blockStyle(c);
-                      return (
-                        <div key={c.id}
-                             onClick={() => toggle(c)}
-                             className="absolute top-1 bottom-1 rounded-md px-1.5 flex items-center
-                                        overflow-hidden text-[11px] font-medium cursor-pointer
-                                        border transition-opacity hover:opacity-75"
-                             style={{
-                               left: s.left, width: s.width,
-                               backgroundColor: s.bg, borderColor: s.border, color: s.text,
-                             }}
-                             title={`${c.name} (${c.start}–${c.end})`}>
-                          <span className="truncate">{c.code}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        )}
 
-        {/* ── Bottom section ── */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-
-          {/* Selected summary */}
-          <div className="bg-white rounded-2xl border border-gray-100 p-5 space-y-4">
-            <h2 className="text-sm font-semibold text-gray-700">วิชาที่เลือก</h2>
-            <CreditBar current={totalCredits} max={MAX_CREDITS} />
-
-            {selectedCourses.length === 0 ? (
-              <p className="text-xs text-gray-400 text-center py-6">
-                กดเลือกวิชาจากรายการด้านขวา
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {selectedCourses.map(c => {
-                  const col = COLORS[c.colorIndex ?? 0];
-                  return (
-                    <div key={c.id}
-                         className="flex items-center justify-between rounded-lg px-3 py-2 text-xs"
-                         style={{ backgroundColor: col.bg }}>
-                      <div className="min-w-0">
-                        <span className="font-mono font-semibold" style={{ color: col.border }}>
-                          {c.code}
-                        </span>
-                        <span className="text-gray-600 ml-1.5 truncate">{c.name}</span>
-                      </div>
-                      <button onClick={() => toggle(c)}
-                              className="ml-2 shrink-0 text-gray-400 hover:text-red-500 text-xs">✕</button>
-                    </div>
-                  );
-                })}
-              </div>
+        {/* Timetable grid card */}
+        <div style={{
+          background: P.cardBg, borderRadius: 16, border: `1px solid ${P.border}`,
+          padding: "16px 16px 12px", marginBottom: 16,
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <h2 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: P.textPrimary }}>ตารางเรียน</h2>
+            {selectedCourses.length > 0 && (
+              <button onClick={() => { setSelected([]); setWarning(""); }} style={{
+                background: "none", border: "none", cursor: "pointer",
+                fontSize: 11, color: P.textHint, padding: 0,
+              }}
+                onMouseEnter={e => e.currentTarget.style.color = "#e53935"}
+                onMouseLeave={e => e.currentTarget.style.color = P.textHint}
+              >ล้างทั้งหมด</button>
             )}
           </div>
+          <Grid selectedCourses={selectedCourses} onRemove={toggle} />
+        </div>
 
-          {/* Course list */}
-          <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-100 p-5 space-y-3">
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-semibold text-gray-700">รายวิชาทั้งหมด</h2>
-              {!loading && !error && (
-                <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
-                  {filtered.length} รายการ
-                </span>
+        {/* Bottom: selected panel + course list */}
+        <div style={{ display: "grid", gridTemplateColumns: "280px minmax(0,1fr)", gap: 16 }}>
+
+          <SelectedPanel
+            selectedCourses={selectedCourses}
+            onRemove={toggle}
+            onClear={() => { setSelected([]); setWarning(""); }}
+            totalCredits={totalCredits}
+          />
+
+          {/* Course list panel */}
+          <div style={{
+            background: P.cardBg, borderRadius: 16, border: `1px solid ${P.border}`,
+            padding: 20, display: "flex", flexDirection: "column", gap: 12,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <h2 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: P.textPrimary }}>รายวิชาทั้งหมด</h2>
+              <span style={{
+                fontSize: 11, padding: "2px 8px", borderRadius: 99,
+                background: P.accentLt, color: P.accent, fontWeight: 600,
+              }}>{filtered.length.toLocaleString()} รายการ</span>
+            </div>
+
+            {/* Filters */}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {majors.length > 1 && (
+                <select value={filterMajor} onChange={e => setFilterMajor(e.target.value)} style={{ ...selectStyle, maxWidth: 224 }}>
+                  <option value="">ทุกสาขาวิชา</option>
+                  {majors.map(m => (
+                    <option key={m.value} value={m.value}>
+                      {m.label.length > 34 ? m.label.slice(0, 34) + "…" : m.label}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {years.length > 1 && (
+                <select value={filterYear} onChange={e => setFilterYear(e.target.value)} style={selectStyle}>
+                  <option value="">ทุกปีรหัส</option>
+                  {years.map(y => <option key={y} value={y}>ปีรหัส {y}</option>)}
+                </select>
+              )}
+              {(filterMajor || filterYear) && (
+                <button onClick={() => { setFilterMajor(""); setFilterYear(""); }} style={{
+                  fontSize: 11, padding: "5px 10px", borderRadius: 8,
+                  border: `1px solid ${P.border}`, background: "#fff",
+                  color: P.textSecondary, cursor: "pointer",
+                }}>ล้างตัวกรอง ✕</button>
               )}
             </div>
 
             {/* Search */}
-            <div className="relative">
-              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400"
-                   fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round"
-                  d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 1016.65 16.65z" />
+            <div style={{ position: "relative" }}>
+              <svg style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}
+                width={13} height={13} viewBox="0 0 24 24" fill="none" stroke={P.textHint} strokeWidth={2.2}>
+                <circle cx={11} cy={11} r={8} /><line x1={21} y1={21} x2={16.65} y2={16.65} />
               </svg>
               <input
                 type="text"
-                placeholder="ค้นหารหัส ชื่อวิชา หรืออาจารย์..."
+                placeholder="ค้นหารหัส ชื่อวิชา หมู่ หรืออาจารย์..."
                 value={query}
                 onChange={e => setQuery(e.target.value)}
-                className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-xl
-                           focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300
-                           placeholder-gray-300"
+                style={{
+                  width: "100%", padding: "7px 10px 7px 30px", fontSize: 13,
+                  border: `1px solid ${P.border}`, borderRadius: 10, outline: "none",
+                  boxSizing: "border-box", background: P.rowBg, color: P.textPrimary,
+                }}
+                onFocus={e => e.target.style.borderColor = P.accentMid}
+                onBlur={e => e.target.style.borderColor = P.border}
               />
             </div>
 
-            {/* List */}
-            <div className="space-y-2 max-h-[400px] overflow-y-auto pr-0.5">
-              {loading && [1,2,3,4].map(i => <Skeleton key={i} />)}
-
-              {error && (
-                <div className="text-center py-10 space-y-2">
-                  <p className="text-red-500 text-sm font-medium">⚠ โหลดข้อมูลไม่สำเร็จ</p>
-                  <p className="text-gray-400 text-xs">{error}</p>
-                  <p className="text-gray-400 text-xs">
-                    วางไฟล์ <code className="bg-gray-100 px-1 rounded font-mono">all_timetables.json</code> ไว้ในโฟลเดอร์ <code className="bg-gray-100 px-1 rounded font-mono">public/</code>
-                  </p>
-                </div>
+            {/* Cards */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 480, overflowY: "auto", paddingRight: 2 }}>
+              {filtered.length === 0 && (
+                <p style={{ textAlign: "center", fontSize: 13, color: P.textHint, padding: "36px 0" }}>
+                  ไม่พบรายวิชา
+                </p>
               )}
-
-              {!loading && !error && filtered.length === 0 && (
-                <p className="text-center text-gray-400 text-sm py-10">ไม่พบรายวิชา</p>
-              )}
-
-              {!loading && !error && filtered.map(course => {
-                const isSelected = selected.includes(course.id);
-                const conflicted = !isSelected && selectedCourses.some(
-                  c => hasConflict(c, course)
-                );
-                const col = COLORS[course.colorIndex ?? 0];
-                return (
-                  <div
-                    key={course.id}
-                    onClick={() => toggle(course)}
-                    className={`
-                      border rounded-xl p-3 cursor-pointer transition-all duration-100 select-none
-                      ${isSelected ? "ring-2 ring-offset-1 shadow-sm" : "hover:border-gray-300"}
-                      ${conflicted ? "opacity-40 pointer-events-none" : ""}
-                    `}
-                    style={{
-                      borderColor: isSelected ? col.border : "#f1f5f9",
-                      backgroundColor: isSelected ? col.bg : "#fff",
-                      "--tw-ring-color": col.border,
-                    }}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-mono font-semibold" style={{ color: col.border }}>
-                          {course.code} · Sec {course.sec}
-                        </p>
-                        <p className="text-sm font-medium text-gray-800 truncate mt-0.5">{course.name}</p>
-                        <p className="text-xs text-gray-400 mt-0.5">
-                          {DAY_LABELS[course.day] ?? course.day} · {course.start}–{course.end}
-                        </p>
-                        {course.instructor && (
-                          <p className="text-xs text-gray-400 truncate">{course.instructor}</p>
-                        )}
-                      </div>
-                      <div className="shrink-0 flex flex-col items-end gap-1">
-                        <span className="text-xs text-gray-400">{course.credit} หน่วย</span>
-                        <div className="w-4 h-4 rounded-full border-2 flex items-center justify-center"
-                             style={{ borderColor: col.border }}>
-                          {isSelected && (
-                            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: col.border }} />
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+              {filtered.map(course => (
+                <CourseCard
+                  key={course.id}
+                  course={course}
+                  isSelected={selected.includes(course.id)}
+                  isConflict={!selected.includes(course.id) && selectedCourses.some(c => hasConflict(c, course))}
+                  onToggle={toggle}
+                />
+              ))}
             </div>
           </div>
         </div>
