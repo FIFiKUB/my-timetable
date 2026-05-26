@@ -234,15 +234,27 @@ def detect_main_page_cols(rows):
             flat += cs
 
     # สาขา/จำนวน outside group spans
+    # cs=2: group=[หมู่,วัน-เวลา], standalone=ห้อง|สาขา|จำนวน after group
+    # cs=3: group=[หมู่,วัน-เวลา,ห้อง], standalone=สาขา|จำนวน after group
     if lect_flat is not None and lab_flat is not None:
-        after_lect = lect_flat + lect_cs
+        after_lect = lect_flat + lect_cs   # first col after บรรยาย group
         if lect_cs < 5 and after_lect < lab_flat:
-            col["lect_branch"] = after_lect
-            col["lect_seats"]  = after_lect + 1
-        after_lab = lab_flat + lab_cs
+            if lect_cs <= 2:
+                col["lect_room"]   = after_lect        # ห้อง standalone
+                col["lect_branch"] = after_lect + 1    # สาขา-ชั้นปี
+                col["lect_seats"]  = after_lect + 2    # จำนวน
+            else:                                       # cs=3: ห้อง inside group
+                col["lect_branch"] = after_lect        # สาขา-ชั้นปี
+                col["lect_seats"]  = after_lect + 1    # จำนวน
+        after_lab = lab_flat + lab_cs      # first col after ปฏิบัติ group
         if lab_cs < 5 and after_lab < col["instructor"]:
-            col["lab_branch"] = after_lab
-            col["lab_seats"]  = after_lab + 1
+            if lab_cs <= 2:
+                col["lab_room"]   = after_lab           # ห้อง standalone
+                col["lab_branch"] = after_lab + 1       # สาขา-ชั้นปี
+                col["lab_seats"]  = after_lab + 2       # จำนวน
+            else:
+                col["lab_branch"] = after_lab
+                col["lab_seats"]  = after_lab + 1
 
     print(f"  [col-detect] map={col}")
     return col
