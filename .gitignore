@@ -22,3 +22,12 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Bot debug/temp files
+debug_*.png
+debug_*.html
+__pycache__/
+*.pyc
+data/
+.claude/
+restart_bot.bat

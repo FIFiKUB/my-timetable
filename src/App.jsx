@@ -1,11 +1,9 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
-
 const MAX_CREDITS = 22;
 const HOUR_START = 8;
 const HOUR_END = 20;
 const TOTAL_HOURS = HOUR_END - HOUR_START;
 const LS_KEY = "timetable_selected_v1";
-
 const DAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 const DAY_LABELS = {
   SUN: "อาทิตย์", MON: "จันทร์", TUE: "อังคาร", WED: "พุธ",
@@ -14,7 +12,6 @@ const DAY_LABELS = {
 const DAY_SHORT = {
   SUN: "อา", MON: "จ", TUE: "อ", WED: "พ", THU: "พฤ", FRI: "ศ", SAT: "ส",
 };
-
 const P = {
   pageBg:        "#fdf2f8",
   cardBg:        "#ffffff",
@@ -37,7 +34,6 @@ const P = {
   conflict:      "#ffebee",
   conflictBorder:"#e53935",
 };
-
 const PALETTE = [
   { bg: "#fce4ec", border: "#e91e8c", text: "#880e4f" },
   { bg: "#fce4f7", border: "#ab47bc", text: "#6a1b9a" },
@@ -52,7 +48,6 @@ const PALETTE = [
   { bg: "#fff0f7", border: "#e040fb", text: "#6a1b9a" },
   { bg: "#fdeef8", border: "#ba68c8", text: "#6a1b9a" },
 ];
-
 // ── helpers ──────────────────────────────────────────────
 function parseTime(hhmm) {
   if (!hhmm) return null;
@@ -63,6 +58,15 @@ function hasConflict(a, b) {
   if (a.day !== b.day || !a.start || !b.start) return false;
   return parseTime(a.start) < parseTime(b.end) && parseTime(b.start) < parseTime(a.end);
 }
+// ดึง time-slots ทั้งหมดของวิชา (บรรยาย + ปฏิบัติ)
+function getSlots(course) {
+  const slots = [];
+  if (course.day && course.start)
+    slots.push({ id: course.id, day: course.day, start: course.start, end: course.end });
+  if (course.labDay && course.labStart)
+    slots.push({ id: course.id, day: course.labDay, start: course.labStart, end: course.labEnd });
+  return slots;
+}
 function blockPos(course) {
   const s = parseTime(course.start), e = parseTime(course.end);
   if (!s || !e) return null;
@@ -72,7 +76,6 @@ function blockPos(course) {
     durationH: e - s,
   };
 }
-
 // ── CreditBar ────────────────────────────────────────────
 function CreditBar({ current, max }) {
   const pct = Math.min((current / max) * 100, 100);
@@ -95,89 +98,88 @@ function CreditBar({ current, max }) {
     </div>
   );
 }
-
 // ── GridBlock ─────────────────────────────────────────────
-function GridBlock({ course, isConflicting, pal, pos, onRemove }) {
-  const dh = pos.durationH;
-  const showName       = dh >= 1.5;
-  const showInstructor = dh >= 2.0;
-  const showRoom       = dh >= 2.0 && course.room;
-
-  const tooltip = [
-    `${course.code} หมู่ ${course.sec}`,
-    course.name,
-    course.instructor !== "-" ? `👤 ${course.instructor}` : "",
-    course.room ? `🏫 ห้อง ${course.room}` : "",
-    `⏱ ${course.start}–${course.end}`,
-    isConflicting ? "⚠ เวลาชนกัน!" : "",
-  ].filter(Boolean).join("\n");
-
+function GridBlock({ course, isConflicting, pal, pos, onRemove, isLab }) {
+  const displayRoom = isLab ? course.labRoom : course.room;
+  const borderStyle = isLab ? "dashed" : "solid";
+  const bgColor     = isLab
+    ? (isConflicting ? P.conflict : pal.bg + "cc")   // lab = slightly transparent
+    : (isConflicting ? P.conflict : pal.bg);
   return (
     <div
+      data-grid-block="1"
       onClick={() => onRemove(course)}
-      title={tooltip}
       style={{
         position: "absolute",
-        top: 3, bottom: 3,
+        top: 4, bottom: 4,
         left: `${pos.leftPct}%`,
         width: `${pos.widthPct}%`,
-        borderRadius: 5,
-        padding: "2px 5px",
-        background: isConflicting ? P.conflict : pal.bg,
-        border: `1.5px solid ${isConflicting ? P.conflictBorder : pal.border}`,
-        color: isConflicting ? P.conflictBorder : pal.text,
-        fontSize: 9,
-        fontWeight: 700,
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "center",
-        overflow: "hidden",
+        borderRadius: 8,
+        padding: "7px 10px",
+        background: bgColor,
+        border: `1.5px ${borderStyle} ${isConflicting ? P.conflictBorder : pal.border}`,
         cursor: "pointer",
-        whiteSpace: "nowrap",
-        lineHeight: 1.25,
+        whiteSpace: "normal",
+        lineHeight: 1.35,
         transition: "opacity .1s",
         boxSizing: "border-box",
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
       }}
-      onMouseEnter={e => e.currentTarget.style.opacity = "0.75"}
+      onMouseEnter={e => e.currentTarget.style.opacity = "0.78"}
       onMouseLeave={e => e.currentTarget.style.opacity = "1"}
     >
-      <span style={{ overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 2 }}>
-        {isConflicting && <span style={{ flexShrink: 0 }}>⚠</span>}
-        <span style={{ fontFamily: "monospace", fontWeight: 800, fontSize: 9 }}>{course.code}</span>
-        <span style={{ opacity: 0.6, fontSize: 8, flexShrink: 0 }}>#{course.sec}</span>
-      </span>
-      {showName && (
-        <span className="grid-secondary" style={{
-          overflow: "hidden", textOverflow: "ellipsis",
-          fontWeight: 500, fontSize: 8, opacity: 0.85,
-        }}>
-          {course.name}
-        </span>
-      )}
-      {showInstructor && course.instructor !== "-" && (
-        <span className="grid-secondary" style={{
-          overflow: "hidden", textOverflow: "ellipsis",
-          fontSize: 8, opacity: 0.7,
-        }}>
-          {course.instructor}
-        </span>
-      )}
-      {showRoom && (
-        <span className="grid-secondary" style={{
-          overflow: "hidden", textOverflow: "ellipsis",
-          fontSize: 8, opacity: 0.65,
-        }}>
-          🏫 {course.room}
-        </span>
+      {/* บรรทัด 1: รหัส + badge (หมู่ / ปฏิบัติ) */}
+      <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+        {isConflicting && (
+          <span style={{ fontSize: 10, color: P.conflictBorder, flexShrink: 0 }}>⚠</span>
+        )}
+        <span style={{
+          fontFamily: "monospace", fontWeight: 700,
+          fontSize: 11, color: isConflicting ? P.conflictBorder : pal.border,
+        }}>{course.code}</span>
+        <span style={{
+          fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 4,
+          background: isConflicting ? P.conflictBorder + "20" : pal.border + "25",
+          color: isConflicting ? P.conflictBorder : pal.text,
+        }}>{isLab ? "🔬 Lab" : `หมู่ ${course.sec}`}</span>
+      </div>
+      {/* บรรทัด 2: ชื่อวิชา */}
+      <div data-grid-name="1" style={{
+        fontSize: 11, fontWeight: 600,
+        color: isConflicting ? P.conflictBorder : P.textPrimary,
+        lineHeight: 1.3,
+        display: "-webkit-box",
+        WebkitLineClamp: 2,
+        WebkitBoxOrient: "vertical",
+        overflow: "hidden",
+      }}>{course.name}</div>
+      {/* บรรทัด 3: อาจารย์ + ห้อง */}
+      {(course.instructor && course.instructor !== "-" || displayRoom) && (
+        <div style={{ fontSize: 10, color: P.textHint, display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap", overflow: "hidden", minWidth: 0 }}>
+          {!isLab && course.instructor && course.instructor !== "-" && (
+            <>
+              <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} style={{ flexShrink: 0 }}>
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx={12} cy={7} r={4}/>
+              </svg>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{course.instructor}</span>
+            </>
+          )}
+          {displayRoom && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 2, whiteSpace: "nowrap", flexShrink: 0 }}>
+              🏫 {displayRoom}
+            </span>
+          )}
+        </div>
       )}
     </div>
   );
 }
-
 // ── Grid ─────────────────────────────────────────────────
 function Grid({ selectedCourses, onRemove, gridRef, conflictIds }) {
   const slots = Array.from({ length: TOTAL_HOURS + 1 }, (_, i) => HOUR_START + i);
-
   return (
     <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
       <div
@@ -193,24 +195,42 @@ function Grid({ selectedCourses, onRemove, gridRef, conflictIds }) {
             }}>{String(h).padStart(2, "0")}:00</div>
           ))}
         </div>
-
         {DAYS.map(day => {
-          const courses = selectedCourses.filter(c => c.day === day);
+          // รวม blocks: บรรยาย (day) + ปฏิบัติ (labDay) ที่ตรงกับวันนี้
+          const lectBlocks = selectedCourses
+            .filter(c => c.day === day)
+            .map(c => ({ course: c, isLab: false, pos: blockPos(c) }))
+            .filter(b => b.pos);
+          const labBlocks = selectedCourses
+            .filter(c => c.labDay === day && c.labStart)
+            .map(c => ({ course: c, isLab: true, pos: blockPos({ start: c.labStart, end: c.labEnd }) }))
+            .filter(b => b.pos);
+          const allBlocks = [...lectBlocks, ...labBlocks];
+
           const isSun = day === "SUN";
           const isSat = day === "SAT";
           const isWeekend = isSun || isSat;
           const rowBg       = isSun ? P.sunBg : isSat ? P.satBg : P.rowBg;
           const borderColor = isSun ? "#f0b8dd" : isSat ? P.borderMid : P.border;
-
+          const hasOverlap = allBlocks.length > 1 && allBlocks.some((a, i) =>
+            allBlocks.slice(i + 1).some(b => {
+              const sa = { day, start: a.isLab ? a.course.labStart : a.course.start, end: a.isLab ? a.course.labEnd : a.course.end };
+              const sb = { day, start: b.isLab ? b.course.labStart : b.course.start, end: b.isLab ? b.course.labEnd : b.course.end };
+              return hasConflict(sa, sb);
+            })
+          );
+          const rowMinHeight = hasOverlap ? 150 : allBlocks.length > 0 ? 96 : 36;
           return (
-            <div key={day} style={{
-              display: "flex", alignItems: "center",
+            <div key={day} data-grid-row="1" style={{
+              display: "flex",
+              alignItems: "flex-start",
               marginBottom: 3,
-              height: 46,
+              minHeight: rowMinHeight,
             }}>
+              {/* label วัน */}
               <div style={{
                 width: 62, flexShrink: 0, fontSize: 10, textAlign: "right",
-                paddingRight: 8,
+                paddingRight: 8, paddingTop: 6,
                 color: isSun ? "#c2185b" : isSat ? P.accentMid : P.textSecondary,
                 fontWeight: isWeekend ? 700 : 400,
               }}>
@@ -218,11 +238,14 @@ function Grid({ selectedCourses, onRemove, gridRef, conflictIds }) {
                 <span className="day-short" style={{ display: "none" }}>{DAY_SHORT[day]}</span>
                 {isSun && <span style={{ fontSize: 8, marginLeft: 2, color: P.accentMid }}>☀</span>}
               </div>
-              <div style={{
-                flex: 1, position: "relative", height: 40,
+              {/* inner row */}
+              <div data-grid-inner="1" style={{
+                flex: 1, position: "relative",
+                minHeight: rowMinHeight,
                 borderRadius: 8, background: rowBg,
                 border: `1px solid ${borderColor}`,
               }}>
+                {/* เส้นแบ่งชั่วโมง */}
                 {Array.from({ length: TOTAL_HOURS - 1 }, (_, i) => (
                   <div key={i} style={{
                     position: "absolute", top: 0, height: "100%",
@@ -230,19 +253,18 @@ function Grid({ selectedCourses, onRemove, gridRef, conflictIds }) {
                     borderLeft: `1px solid ${P.gridLine}`,
                   }} />
                 ))}
-                {courses.map(c => {
-                  const pos = blockPos(c);
-                  if (!pos) return null;
+                {allBlocks.map(({ course: c, isLab, pos }) => {
                   const isConflicting = conflictIds.has(c.id);
                   const pal = PALETTE[c.colorIndex];
                   return (
                     <GridBlock
-                      key={c.id}
+                      key={`${c.id}_${isLab ? "lab" : "lect"}`}
                       course={c}
                       isConflicting={isConflicting}
                       pal={pal}
                       pos={pos}
                       onRemove={onRemove}
+                      isLab={isLab}
                     />
                   );
                 })}
@@ -250,7 +272,6 @@ function Grid({ selectedCourses, onRemove, gridRef, conflictIds }) {
             </div>
           );
         })}
-
         {selectedCourses.length === 0 && (
           <p style={{
             textAlign: "center", fontSize: 11, color: P.textHint,
@@ -263,7 +284,6 @@ function Grid({ selectedCourses, onRemove, gridRef, conflictIds }) {
     </div>
   );
 }
-
 // ── SelectedPanel ─────────────────────────────────────────
 function SelectedPanel({ selectedCourses, onRemove, onClear, totalCredits, conflictIds }) {
   return (
@@ -283,9 +303,7 @@ function SelectedPanel({ selectedCourses, onRemove, onClear, totalCredits, confl
           >ล้างทั้งหมด</button>
         )}
       </div>
-
       <CreditBar current={totalCredits} max={MAX_CREDITS} />
-
       {conflictIds.size > 0 && (
         <div style={{
           background: "#ffebee", border: "1px solid #e5393540", borderRadius: 8,
@@ -296,7 +314,6 @@ function SelectedPanel({ selectedCourses, onRemove, onClear, totalCredits, confl
           <span>มี {conflictIds.size} วิชาที่เวลาชนกัน — ดูกล่องสีแดงในตาราง</span>
         </div>
       )}
-
       {selectedCourses.length === 0 ? (
         <p style={{ fontSize: 12, color: P.textHint, textAlign: "center", padding: "16px 0", margin: 0 }}>
           กดเลือกวิชาจากรายการด้านล่าง
@@ -335,6 +352,12 @@ function SelectedPanel({ selectedCourses, onRemove, onClear, totalCredits, confl
                     {c.room && <span>· 🏫 {c.room}</span>}
                     <span>· {c.credit} หน่วย</span>
                   </div>
+                  {c.labStart && (
+                    <div style={{ fontSize: 10, color: P.textHint, marginTop: 1 }}>
+                      🔬 {DAY_LABELS[c.labDay] ?? c.labDay} {c.labStart}–{c.labEnd}
+                      {c.labRoom ? ` · 🏫 ${c.labRoom}` : ""}
+                    </div>
+                  )}
                 </div>
                 <button onClick={() => onRemove(c)} style={{
                   background: "none", border: "none", cursor: "pointer",
@@ -351,12 +374,10 @@ function SelectedPanel({ selectedCourses, onRemove, onClear, totalCredits, confl
     </div>
   );
 }
-
 // ── CourseCard ────────────────────────────────────────────
 function CourseCard({ course, isSelected, isConflict, isDuplicateCode, onToggle }) {
   const pal = PALETTE[course.colorIndex];
   const isDisabled = !isSelected && isDuplicateCode;
-
   return (
     <div
       onClick={() => !isDisabled && onToggle(course)}
@@ -378,7 +399,6 @@ function CourseCard({ course, isSelected, isConflict, isDuplicateCode, onToggle 
     >
       <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          {/* บรรทัด 1: รหัส + หมู่ + ปีรหัส + badge */}
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 3 }}>
             <span style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 700, color: pal.border }}>
               {course.code}
@@ -408,14 +428,10 @@ function CourseCard({ course, isSelected, isConflict, isDuplicateCode, onToggle 
               }}>เลือกหมู่อื่นแล้ว</span>
             )}
           </div>
-
-          {/* บรรทัด 2: ชื่อวิชา */}
           <div style={{
             fontSize: 13, fontWeight: 600, color: P.textPrimary,
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginBottom: 3,
           }}>{course.name}</div>
-
-          {/* บรรทัด 3: เวลา + อาจารย์ + ห้อง */}
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             {course.start && (
               <span style={{ fontSize: 11, color: P.textSecondary, display: "flex", alignItems: "center", gap: 3 }}>
@@ -423,6 +439,7 @@ function CourseCard({ course, isSelected, isConflict, isDuplicateCode, onToggle 
                   <circle cx={12} cy={12} r={10} /><polyline points="12 6 12 12 16 14" />
                 </svg>
                 {DAY_SHORT[course.day] ?? course.day} · {course.start}–{course.end}
+                {course.room ? ` · 🏫 ${course.room}` : ""}
               </span>
             )}
             {course.instructor && course.instructor !== "-" && (
@@ -433,21 +450,22 @@ function CourseCard({ course, isSelected, isConflict, isDuplicateCode, onToggle 
                 {course.instructor}
               </span>
             )}
-            {course.room && (
-              <span style={{ fontSize: 11, color: P.textHint, display: "flex", alignItems: "center", gap: 3 }}>
-                🏫 {course.room}
-              </span>
-            )}
           </div>
-
-          {/* สาขา */}
+          {/* ปฏิบัติ */}
+          {course.labStart && (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 2 }}>
+              <span style={{ fontSize: 11, color: P.textSecondary, display: "flex", alignItems: "center", gap: 3 }}>
+                🔬 {DAY_SHORT[course.labDay] ?? course.labDay} · {course.labStart}–{course.labEnd}
+                {course.labRoom ? ` · 🏫 ${course.labRoom}` : ""}
+              </span>
+            </div>
+          )}
           {course.majorLabel && (
             <div style={{ fontSize: 10, color: P.textHint, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {course.majorLabel}
             </div>
           )}
         </div>
-
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5, flexShrink: 0 }}>
           <span style={{ fontSize: 11, color: P.textHint }}>{course.credit} หน่วย</span>
           <div style={{
@@ -461,32 +479,28 @@ function CourseCard({ course, isSelected, isConflict, isDuplicateCode, onToggle 
     </div>
   );
 }
-
 // ── SAMPLE DATA ───────────────────────────────────────────
 const SAMPLE_DATA = {
   courses: [
-    { code: "04252211", name: "Electric Circuit Analysis I", sec: "1", day: "MON", start: "09:30", end: "12:30", instructor: "อ.ณธกร", room: "2-302", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
-    { code: "04252214", name: "Digital System Design", sec: "1", day: "MON", start: "13:30", end: "16:30", instructor: "อ.เศรษฐกร", room: "2-301", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
-    { code: "01355102", name: "English for University Life", sec: "9", day: "TUE", start: "13:30", end: "16:30", instructor: "อ.วีระชัย", room: "13-208/1", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
-    { code: "04253201", name: "Basic Principles of Engineering Mechanics", sec: "1", day: "WED", start: "09:30", end: "12:30", instructor: "อ.ประภากรณ์", room: "9-302", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
-    { code: "04252213", name: "Electric Circuit Laboratory", sec: "102", day: "THU", start: "13:30", end: "16:30", instructor: "อ.กิติโชค", room: "6-203", credit: 1, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
-    { code: "04252299", name: "Special Topics in EE", sec: "1", day: "SUN", start: "09:00", end: "12:00", instructor: "อ.ปิยวัฒน์", room: "", credit: 3, year: "68", major_value: "B5602_B", major_label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
-    { code: "01132222", name: "Human Resource Management", sec: "1", day: "MON", start: "09:30", end: "12:30", instructor: "อ.นัฐนันท์", room: "13-211", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
-    { code: "01101182", name: "Macroeconomics I", sec: "2", day: "MON", start: "13:30", end: "16:30", instructor: "อ.ฐิตาวรรณ", room: "2-303", credit: 3, year: "68", major_value: "C5101_B", major_label: "การจัดการ (C5101) -ป.ตรี" },
-    { code: "01418231", name: "Data Structures and Algorithms", sec: "1", day: "WED", start: "09:30", end: "12:30", instructor: "อ.ฐาปนี", room: "9-301/1", credit: 3, year: "67", major_value: "B6001_B", major_label: "วิทยาการคอมพิวเตอร์ (B6001) -ป.ตรี" },
-    { code: "01418233", name: "Computer Architecture", sec: "1", day: "FRI", start: "13:30", end: "16:30", instructor: "อ.ถนอมศักดิ์", room: "9-306", credit: 3, year: "67", major_value: "B6001_B", major_label: "วิทยาการคอมพิวเตอร์ (B6001) -ป.ตรี" },
-    { code: "01418299", name: "Senior Project I", sec: "1", day: "SAT", start: "09:00", end: "12:00", instructor: "อ.ธีระ", room: "7-114/2", credit: 3, year: "65", major_value: "B6001_B", major_label: "วิทยาการคอมพิวเตอร์ (B6001) -ป.ตรี" },
+    { code: "04252211", name: "Electric Circuit Analysis I", sec: "1", day: "MON", start: "09:30", end: "12:30", instructor: "อ.ณธกร", room: "2-302", credit: 3, year: "2", major_value: "วิศวกรรมไฟฟ้า", major_label: "วิศวกรรมไฟฟ้า", branch: "วิศวกรรมไฟฟ้า-2", lab_day: "WED", lab_start: "13:30", lab_end: "16:30", lab_room: "6-203", seats_total: 30, seats_enrolled: 25 },
+    { code: "04252214", name: "Digital System Design", sec: "1", day: "TUE", start: "09:30", end: "12:30", instructor: "อ.เศรษฐกร", room: "2-301", credit: 3, year: "2", major_value: "วิศวกรรมไฟฟ้า", major_label: "วิศวกรรมไฟฟ้า", branch: "วิศวกรรมไฟฟ้า-2", lab_day: "FRI", lab_start: "09:30", lab_end: "12:30", lab_room: "6-204", seats_total: 30, seats_enrolled: 30 },
+    { code: "01355102", name: "English for University Life", sec: "9", day: "TUE", start: "13:30", end: "16:30", instructor: "อ.วีระชัย", room: "13-208/1", credit: 3, year: "2", major_value: "วิศวกรรมไฟฟ้า", major_label: "วิศวกรรมไฟฟ้า", branch: "วิศวกรรมไฟฟ้า-2", seats_total: 40, seats_enrolled: 35 },
+    { code: "04253201", name: "Engineering Mechanics", sec: "1", day: "WED", start: "09:30", end: "12:30", instructor: "อ.ประภากรณ์", room: "9-302", credit: 3, year: "2", major_value: "วิศวกรรมไฟฟ้า", major_label: "วิศวกรรมไฟฟ้า", branch: "วิศวกรรมไฟฟ้า-2", seats_total: 35, seats_enrolled: 20 },
+    { code: "04252299", name: "Special Topics in EE", sec: "1", day: "SUN", start: "09:00", end: "12:00", instructor: "อ.ปิยวัฒน์", room: "", credit: 3, year: "2", major_value: "วิศวกรรมไฟฟ้า", major_label: "วิศวกรรมไฟฟ้า", branch: "วิศวกรรมไฟฟ้า-2" },
+    { code: "01132222", name: "Human Resource Management", sec: "1", day: "MON", start: "09:30", end: "12:30", instructor: "อ.นัฐนันท์", room: "13-211", credit: 3, year: "2", major_value: "การจัดการ", major_label: "การจัดการ", branch: "การจัดการ-2", seats_total: 50, seats_enrolled: 42 },
+    { code: "01101182", name: "Macroeconomics I", sec: "2", day: "MON", start: "13:30", end: "16:30", instructor: "อ.ฐิตาวรรณ", room: "2-303", credit: 3, year: "2", major_value: "การจัดการ", major_label: "การจัดการ", branch: "การจัดการ-2", seats_total: 50, seats_enrolled: 18 },
+    { code: "01418231", name: "Data Structures and Algorithms", sec: "1", day: "WED", start: "09:30", end: "12:30", instructor: "อ.ฐาปนี", room: "9-301/1", credit: 3, year: "3", major_value: "วิทยาการคอมพิวเตอร์", major_label: "วิทยาการคอมพิวเตอร์", branch: "วิทยาการคอมพิวเตอร์-3", lab_day: "THU", lab_start: "13:30", lab_end: "16:30", lab_room: "9-305", seats_total: 40, seats_enrolled: 38 },
+    { code: "01418233", name: "Computer Architecture", sec: "1", day: "FRI", start: "13:30", end: "16:30", instructor: "อ.ถนอมศักดิ์", room: "9-306", credit: 3, year: "3", major_value: "วิทยาการคอมพิวเตอร์", major_label: "วิทยาการคอมพิวเตอร์", branch: "วิทยาการคอมพิวเตอร์-3", seats_total: 40, seats_enrolled: 15 },
+    { code: "01418299", name: "Senior Project I", sec: "1", day: "SAT", start: "09:00", end: "12:00", instructor: "อ.ธีระ", room: "7-114/2", credit: 3, year: "4", major_value: "วิทยาการคอมพิวเตอร์", major_label: "วิทยาการคอมพิวเตอร์", branch: "วิทยาการคอมพิวเตอร์-4", seats_total: 20, seats_enrolled: 12 },
   ],
   majors: [
-    { value: "B5602_B", label: "วิศวกรรมไฟฟ้า (B5602) -ป.ตรี" },
-    { value: "C5101_B", label: "การจัดการ (C5101) -ป.ตรี" },
-    { value: "B6001_B", label: "วิทยาการคอมพิวเตอร์ (B6001) -ป.ตรี" },
+    { value: "วิศวกรรมไฟฟ้า", label: "วิศวกรรมไฟฟ้า" },
+    { value: "การจัดการ", label: "การจัดการ" },
+    { value: "วิทยาการคอมพิวเตอร์", label: "วิทยาการคอมพิวเตอร์" },
   ],
-  std_year: "68",
+  std_year: "",
   updated_at: null,
 };
-
-// แปลง "HH.MM" หรือ "HH:MM" → "HH:MM"
 function normalizeTime(raw) {
   if (!raw) return "";
   const s = String(raw).trim();
@@ -502,8 +516,6 @@ function normalizeTime(raw) {
   }
   return s;
 }
-
-// parse "day_time" format เก่า เช่น "MON 9.30-12.30" หรือ "MON 09:30-12:30"
 function parseDayTime(dt) {
   if (!dt) return { day: "", start: "", end: "" };
   const DAY_MAP = { SUN:"SUN", MON:"MON", TUE:"TUE", WED:"WED", THU:"THU", FRI:"FRI", SAT:"SAT" };
@@ -515,7 +527,6 @@ function parseDayTime(dt) {
   if (tm) return { day, start: normalizeTime(tm[1]), end: normalizeTime(tm[2]) };
   return { day, start: "", end: "" };
 }
-
 function normalizeCourse(entry, index) {
   const code = String(entry.code ?? entry.subject_code ?? "").replace(/-\d{2,4}$/, "").trim();
   const name = String(entry.name ?? entry.subject_name ?? "(ไม่มีชื่อ)");
@@ -523,11 +534,12 @@ function normalizeCourse(entry, index) {
   const instructor = String(entry.instructor ?? entry.teacher ?? "-");
   const credit = Number(entry.credit ?? entry.credits ?? 3);
   const year = String(entry.year ?? "");
-  const majorValue = String(entry.major_value ?? "");
-  const majorLabel = String(entry.major_label ?? "");
+  const branch = String(entry.branch ?? "");
+  // major_value อาจว่างเปล่าเมื่อ scrape จาก main page → ใช้ branch/major_label แทน
+  const majorLabel = String(entry.major_label ?? branch ?? "");
+  const majorValue = String(entry.major_value || majorLabel || "");
   const room = String(entry.room ?? "");
-
-  // รับได้ทั้ง format ใหม่ (day/start/end แยกกัน) และ format เก่า (day_time รวมกัน)
+  // ── บรรยาย (lecture) ────────────────────────────────────
   let day   = String(entry.day   ?? "");
   let start = String(entry.start ?? "");
   let end   = String(entry.end   ?? "");
@@ -537,21 +549,28 @@ function normalizeCourse(entry, index) {
     if (!start) start = parsed.start;
     if (!end)   end   = parsed.end;
   }
-  // normalize เวลา เผื่อมาในรูปแบบ "9.30" แทน "09:30"
   start = normalizeTime(start) || start;
   end   = normalizeTime(end)   || end;
-
+  // ── ปฏิบัติ (lab) ───────────────────────────────────────
+  const labDay   = String(entry.lab_day   ?? "");
+  const labStart = normalizeTime(String(entry.lab_start ?? "")) || "";
+  const labEnd   = normalizeTime(String(entry.lab_end   ?? "")) || "";
+  const labRoom  = String(entry.lab_room  ?? "");
+  // ── จำนวนที่นั่ง ─────────────────────────────────────────
+  const seatsTotal    = Number(entry.seats_total    ?? -1);
+  const seatsEnrolled = Number(entry.seats_enrolled ?? -1);
   const valid = !!(code && day && start && end);
   return {
     _raw: entry,
     id: `${code}_${sec}_${day}_${index}`,
     code, name, sec, day, start, end, credit,
-    instructor, year, majorValue, majorLabel, room,
+    instructor, year, majorValue, majorLabel, room, branch,
+    labDay, labStart, labEnd, labRoom,
+    seatsTotal, seatsEnrolled,
     colorIndex: index % PALETTE.length,
     valid,
   };
 }
-
 function parseDataSource(raw) {
   const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.courses) ? raw.courses : [];
   if (arr.length === 0) throw new Error("ไม่พบข้อมูลรายวิชา");
@@ -570,7 +589,6 @@ function parseDataSource(raw) {
     updated_at: raw?.updated_at ?? null,
   };
 }
-
 // ── MAIN APP ──────────────────────────────────────────────
 export default function App() {
   const [rawInput, setRawInput]       = useState("");
@@ -588,19 +606,16 @@ export default function App() {
   const [updateInput, setUpdateInput] = useState("");
   const [updateError, setUpdateError] = useState("");
   const gridRef = useRef(null);
-
   const [selected, setSelected] = useState(() => {
     try {
       const saved = localStorage.getItem(LS_KEY);
       return saved ? JSON.parse(saved) : [];
     } catch { return []; }
   });
-
   useEffect(() => {
     try { localStorage.setItem(LS_KEY, JSON.stringify(selected)); }
     catch { /* quota exceeded */ }
   }, [selected]);
-
   useEffect(() => {
     setIsLoading(true);
     fetch("/all_timetables.json")
@@ -609,14 +624,12 @@ export default function App() {
       .catch(() => { /* fallback to SAMPLE_DATA */ })
       .finally(() => setIsLoading(false));
   }, []);
-
   function loadJSON(text) {
     try {
       const ds = parseDataSource(JSON.parse(text));
       setDataSource(ds); setSelected([]); setWarning(""); setLoadError(""); setJsonLoaded(true);
     } catch (e) { setLoadError(e.message); }
   }
-
   function updateJSON(text) {
     try {
       const ds = parseDataSource(JSON.parse(text));
@@ -624,43 +637,39 @@ export default function App() {
       setShowUpdatePanel(false); setUpdateInput(""); setJsonLoaded(true);
     } catch (e) { setUpdateError(e.message); }
   }
-
   const allCourses = useMemo(
     () => dataSource.courses.map((e, i) => normalizeCourse(e, i)).filter(c => c.valid),
     [dataSource]
   );
   const majors = dataSource.majors ?? [];
-
   const years = useMemo(() => {
     const s = new Set(allCourses.map(c => c.year).filter(Boolean));
     return Array.from(s).sort((a, b) => b.localeCompare(a));
   }, [allCourses]);
-
   const selectedCourses = useMemo(
     () => allCourses.filter(c => selected.includes(c.id)),
     [allCourses, selected]
   );
   const totalCredits = selectedCourses.reduce((s, c) => s + c.credit, 0);
-
   const conflictIds = useMemo(() => {
     const ids = new Set();
-    for (let i = 0; i < selectedCourses.length; i++) {
-      for (let j = i + 1; j < selectedCourses.length; j++) {
-        if (hasConflict(selectedCourses[i], selectedCourses[j])) {
-          ids.add(selectedCourses[i].id);
-          ids.add(selectedCourses[j].id);
+    // รวม slot ทั้งหมด (บรรยาย + ปฏิบัติ) แล้วเช็คทุกคู่
+    const allSlots = selectedCourses.flatMap(getSlots);
+    for (let i = 0; i < allSlots.length; i++) {
+      for (let j = i + 1; j < allSlots.length; j++) {
+        const a = allSlots[i], b = allSlots[j];
+        if (a.id !== b.id && hasConflict(a, b)) {
+          ids.add(a.id);
+          ids.add(b.id);
         }
       }
     }
     return ids;
   }, [selectedCourses]);
-
-  // Set ของ course.code ที่ถูกเลือกไปแล้ว (สำหรับดัก duplicate)
   const selectedCodes = useMemo(
     () => new Set(selectedCourses.map(c => c.code)),
     [selectedCourses]
   );
-
   const filtered = useMemo(() => {
     let list = allCourses;
     if (filterMajor) list = list.filter(c => c.majorValue === filterMajor);
@@ -678,66 +687,96 @@ export default function App() {
     }
     return list;
   }, [allCourses, filterMajor, filterYear, filterDay, query]);
-
-  // ── toggle ────────────────────────────────────────────
   function toggle(course) {
-    // ถอนวิชา
     if (selected.includes(course.id)) {
       setSelected(p => p.filter(id => id !== course.id));
       setWarning("");
       return;
     }
-
-    // ✅ ดักซ้ำ: รหัสวิชาเดียวกัน คนละ sec
     const duplicateCode = selectedCourses.find(c => c.code === course.code);
     if (duplicateCode) {
-      setWarning(
-        `⚠️ เลือกวิชา ${course.code} หมู่ ${duplicateCode.sec} ไปแล้ว (เลือกได้ 1 หมู่เรียน/รายวิชา)`
-      );
+      setWarning(`⚠️ เลือกวิชา ${course.code} หมู่ ${duplicateCode.sec} ไปแล้ว (เลือกได้ 1 หมู่เรียน/รายวิชา)`);
       return;
     }
-
-    // เกินหน่วยกิต
     if (totalCredits + course.credit > MAX_CREDITS) {
       setWarning(`หน่วยกิตเกิน ${MAX_CREDITS} (จะเป็น ${totalCredits + course.credit} หน่วย)`);
       return;
     }
-
-    // เพิ่มได้ แต่เวลาชนกัน — highlight แดง
-    const conflict = selectedCourses.find(c => hasConflict(c, course));
+    // เช็คชนเวลาระหว่างทุก slot (บรรยาย+ปฏิบัติ) ของวิชาใหม่กับวิชาที่เลือกไว้แล้ว
+    const newSlots  = getSlots({ ...course, id: course.id });
+    const conflict = selectedCourses.find(c =>
+      getSlots(c).some(es => newSlots.some(ns => hasConflict(ns, es)))
+    );
     if (conflict) {
       setSelected(p => [...p, course.id]);
-      setWarning(
-        `⚠ ${course.code} หมู่ ${course.sec} เวลาชนกับ ${conflict.code} หมู่ ${conflict.sec} — กล่องสีแดงแสดงในตาราง`
-      );
+      setWarning(`⚠ ${course.code} หมู่ ${course.sec} เวลาชนกับ ${conflict.code} หมู่ ${conflict.sec} — กล่องสีแดงแสดงในตาราง`);
       return;
     }
-
     setSelected(p => [...p, course.id]);
     setWarning("");
   }
-
   // ── Export PNG ────────────────────────────────────────
   const exportPNG = useCallback(async () => {
     if (!gridRef.current || selectedCourses.length === 0) return;
     setIsExporting(true);
     const el = gridRef.current;
+    const scrollWrapEl = el.parentElement;
+    const savedScrollOverflow = scrollWrapEl?.style.overflowX ?? "";
+    const rowEls = el.querySelectorAll("[data-grid-row]");
+    const innerRowEls = el.querySelectorAll("[data-grid-inner]");
+    const blockEls = el.querySelectorAll("[data-grid-block]");
+    const nameEls = el.querySelectorAll("[data-grid-name]");
+    const savedRowStyles = Array.from(rowEls).map(r => ({ el: r, minHeight: r.style.minHeight, height: r.style.height }));
+    const savedInnerStyles = Array.from(innerRowEls).map(r => ({ el: r, minHeight: r.style.minHeight, height: r.style.height }));
+    const savedBlockStyles = Array.from(blockEls).map(b => ({
+      overflow: b.style.overflow, bottom: b.style.bottom, height: b.style.height,
+    }));
+    const savedNameStyles = Array.from(nameEls).map(n => ({
+      overflow: n.style.overflow, webkitLineClamp: n.style.webkitLineClamp, display: n.style.display,
+    }));
+    let tmpStyle = null;
     try {
       if (!window.html2canvas) {
         await new Promise((resolve, reject) => {
           const s = document.createElement("script");
           s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
-          s.onload = resolve; s.onerror = reject;
+          s.onload = resolve;
+          s.onerror = reject;
           document.head.appendChild(s);
         });
       }
+      if (scrollWrapEl) scrollWrapEl.style.overflowX = "visible";
       el.style.minWidth = "960px";
+      // ขยาย row
+      rowEls.forEach(r => { r.style.height = "auto"; r.style.minHeight = "120px"; });
+      innerRowEls.forEach(r => { r.style.height = "auto"; r.style.minHeight = "114px"; });
+      // ปลด bottom constraint → block สูงตาม content ไม่ถูกบีบจาก parent height
+      blockEls.forEach(b => {
+        b.style.overflow = "visible";
+        b.style.bottom = "auto";
+        b.style.height = "auto";
+      });
+      nameEls.forEach(n => {
+        n.style.overflow = "visible";
+        n.style.webkitLineClamp = "unset";
+        n.style.display = "block";
+      });
+      tmpStyle = document.createElement("style");
+      tmpStyle.textContent =
+        ".day-full{display:block!important}" +
+        ".day-short{display:none!important}";
+      document.head.appendChild(tmpStyle);
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
       const canvas = await window.html2canvas(el, {
         backgroundColor: "#ffffff",
         scale: 2,
         useCORS: true,
         logging: false,
         windowWidth: 1200,
+        height: el.scrollHeight,
+        width: el.scrollWidth,
+        scrollX: 0,
+        scrollY: 0,
       });
       const link = document.createElement("a");
       const date = new Date()
@@ -750,23 +789,29 @@ export default function App() {
       console.error("Export failed:", err);
       alert("Export ไม่สำเร็จ — กรุณาลองใหม่อีกครั้ง");
     } finally {
+      if (scrollWrapEl) scrollWrapEl.style.overflowX = savedScrollOverflow;
       el.style.minWidth = "";
+      savedRowStyles.forEach(({ el: r, minHeight, height }) => { r.style.minHeight = minHeight; r.style.height = height; });
+      savedInnerStyles.forEach(({ el: r, minHeight, height }) => { r.style.minHeight = minHeight; r.style.height = height; });
+      Array.from(blockEls).forEach((b, i) => {
+        b.style.overflow = savedBlockStyles[i].overflow;
+        b.style.bottom   = savedBlockStyles[i].bottom;
+        b.style.height   = savedBlockStyles[i].height;
+      });
+      Array.from(nameEls).forEach((n, i) => { n.style.overflow = savedNameStyles[i].overflow; n.style.webkitLineClamp = savedNameStyles[i].webkitLineClamp; n.style.display = savedNameStyles[i].display; });
+      tmpStyle?.remove();
       setIsExporting(false);
     }
   }, [selectedCourses.length]);
-
   const selectStyle = {
     fontSize: 12, padding: "5px 10px", borderRadius: 8,
     border: `1px solid ${P.border}`, background: "#fff",
     color: P.textPrimary, cursor: "pointer",
   };
-
   return (
     <div style={{ minHeight: "100vh", background: P.pageBg, fontFamily: "'Noto Sans Thai', sans-serif" }}>
-
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-
         .timetable-layout {
           display: grid;
           grid-template-columns: 1fr;
@@ -776,7 +821,6 @@ export default function App() {
         .selected-panel-list { max-height: 240px; overflow-y: auto; }
         .course-list-scroll  { max-height: 420px; overflow-y: auto; }
         .filter-select { min-width: 0; flex: 1; }
-
         @media (min-width: 900px) {
           .timetable-layout {
             grid-template-columns: minmax(0, 1fr) 340px;
@@ -795,7 +839,6 @@ export default function App() {
           .timetable-layout { grid-template-columns: minmax(0, 1fr) 380px; }
           .course-list-scroll { max-height: calc(100vh - 520px); }
         }
-
         @media (max-width: 599px) {
           .grid-secondary { display: none !important; }
           .day-full { display: none; }
@@ -804,17 +847,15 @@ export default function App() {
         @media (min-width: 600px) {
           .day-short { display: none !important; }
         }
-
         .selected-panel-list::-webkit-scrollbar,
         .course-list-scroll::-webkit-scrollbar,
         .sidebar-sticky::-webkit-scrollbar { width: 4px; }
         .selected-panel-list::-webkit-scrollbar-thumb,
         .course-list-scroll::-webkit-scrollbar-thumb,
         .sidebar-sticky::-webkit-scrollbar-thumb {
-          background: ${P.border}; border-radius: 99px;
+          background: #f5d0e8; border-radius: 99px;
         }
       `}</style>
-
       {/* ── Header ── */}
       <header style={{
         background: P.headerBg, borderBottom: `1px solid ${P.border}`,
@@ -863,14 +904,12 @@ export default function App() {
               </div>
             </div>
           </div>
-
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
             {selectedCourses.length > 0 && (
               <span style={{ fontSize: 11, color: P.accent, fontWeight: 700, whiteSpace: "nowrap" }}>
                 {selectedCourses.length} วิชา · {totalCredits} หน่วย
               </span>
             )}
-
             {selectedCourses.length > 0 && (
               <button
                 onClick={exportPNG}
@@ -896,7 +935,6 @@ export default function App() {
                 }
               </button>
             )}
-
             {jsonLoaded && (
               <button
                 onClick={() => { setShowUpdatePanel(p => !p); setUpdateError(""); }}
@@ -913,10 +951,7 @@ export default function App() {
           </div>
         </div>
       </header>
-
       <div style={{ maxWidth: 1320, margin: "0 auto", padding: "16px 16px 48px" }}>
-
-        {/* Panel อัพเดทข้อมูล */}
         {showUpdatePanel && (
           <div style={{
             background: "#fff3e0", border: "1px solid #ffcc02", borderRadius: 12,
@@ -951,8 +986,6 @@ export default function App() {
             </div>
           </div>
         )}
-
-        {/* Loading */}
         {isLoading && (
           <div style={{
             background: P.accentLt, border: `1px solid ${P.borderMid}`, borderRadius: 12,
@@ -966,8 +999,6 @@ export default function App() {
             <span>กำลังโหลดข้อมูลตารางเรียน...</span>
           </div>
         )}
-
-        {/* JSON upload banner */}
         {!isLoading && !jsonLoaded && (
           <div style={{
             background: P.accentLt, border: `1px solid ${P.borderMid}`, borderRadius: 12,
@@ -1007,8 +1038,6 @@ export default function App() {
             </div>
           </div>
         )}
-
-        {/* Warning */}
         {warning && (
           <div style={{
             background: P.warn, border: `1px solid ${P.warnBorder}`, borderRadius: 10,
@@ -1026,10 +1055,7 @@ export default function App() {
             }}>✕</button>
           </div>
         )}
-
-        {/* ── MAIN LAYOUT ── */}
         <div className="timetable-layout">
-
           {/* คอลัมน์ซ้าย: ตารางเรียน */}
           <div style={{
             background: P.cardBg, borderRadius: 16, border: `1px solid ${P.border}`,
@@ -1059,7 +1085,6 @@ export default function App() {
               conflictIds={conflictIds}
             />
           </div>
-
           {/* คอลัมน์ขวา: Sidebar */}
           <div className="sidebar sidebar-sticky">
             <SelectedPanel
@@ -1069,8 +1094,6 @@ export default function App() {
               totalCredits={totalCredits}
               conflictIds={conflictIds}
             />
-
-            {/* รายวิชาทั้งหมด */}
             <div style={{
               background: P.cardBg, borderRadius: 16, border: `1px solid ${P.border}`,
               padding: 20, display: "flex", flexDirection: "column", gap: 12,
@@ -1082,8 +1105,6 @@ export default function App() {
                   background: P.accentLt, color: P.accent, fontWeight: 600,
                 }}>{filtered.length.toLocaleString()}</span>
               </div>
-
-              {/* Filters */}
               <div style={{ display: "flex", gap: 8, flexDirection: "column" }}>
                 {majors.length > 1 && (
                   <select value={filterMajor} onChange={e => setFilterMajor(e.target.value)}
@@ -1118,8 +1139,6 @@ export default function App() {
                   }}>ล้างตัวกรอง ✕</button>
                 )}
               </div>
-
-              {/* Search */}
               <div style={{ position: "relative" }}>
                 <svg style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}
                   width={13} height={13} viewBox="0 0 24 24" fill="none" stroke={P.textHint} strokeWidth={2.2}>
@@ -1138,8 +1157,6 @@ export default function App() {
                   onBlur={e => e.target.style.borderColor = P.border}
                 />
               </div>
-
-              {/* Course cards */}
               <div className="course-list-scroll" style={{ display: "flex", flexDirection: "column", gap: 6, paddingRight: 2 }}>
                 {filtered.length === 0 && (
                   <p style={{ textAlign: "center", fontSize: 13, color: P.textHint, padding: "36px 0", margin: 0 }}>
@@ -1166,7 +1183,6 @@ export default function App() {
             </div>
           </div>
         </div>
-
       </div>
     </div>
   );
