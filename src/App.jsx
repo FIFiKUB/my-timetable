@@ -533,11 +533,26 @@ function normalizeCourse(entry, index) {
   const sec = String(entry.sec ?? entry.section ?? "1");
   const instructor = String(entry.instructor ?? entry.teacher ?? "-");
   const credit = Number(entry.credit ?? entry.credits ?? 3);
-  const year = String(entry.year ?? "");
-  const branch = String(entry.branch ?? "");
-  // major_value อาจว่างเปล่าเมื่อ scrape จาก main page → ใช้ branch/major_label แทน
-  const majorLabel = String(entry.major_label ?? branch ?? "");
-  const majorValue = String(entry.major_value || majorLabel || "");
+  // ── extract year / major จาก branches array (scraped data) ─────────
+  const rawBranches = Array.isArray(entry.branches) ? entry.branches : [];
+  let year = String(entry.year ?? "");
+  let majorValue = String(entry.major_value ?? "");
+  let majorLabel = String(entry.major_label ?? "");
+  if (!year) {
+    for (const br of rawBranches) {
+      const m = String(br).match(/-(\d{2})$/);
+      if (m) { year = m[1]; break; }
+    }
+  }
+  if (!majorValue) {
+    for (const br of rawBranches) {
+      const m = String(br).match(/^([A-Z]\d+)-/i);
+      if (m) { majorValue = m[1].toUpperCase(); break; }
+    }
+  }
+  if (!majorLabel) majorLabel = majorValue;
+  // ────────────────────────────────────────────────────────────────────
+  const branch = String(entry.branch ?? rawBranches.join(", "));
   const room = String(entry.room ?? "");
   // ── บรรยาย (lecture) ────────────────────────────────────
   let day   = String(entry.day   ?? "");
@@ -577,10 +592,19 @@ function parseDataSource(raw) {
   const majors = Array.isArray(raw?.majors) ? raw.majors : (() => {
     const m = new Map();
     arr.forEach(e => {
-      const v = e.major_value ?? "", l = e.major_label ?? v;
+      let v = String(e.major_value ?? "");
+      let l = String(e.major_label ?? v);
+      // ถ้า major_value ว่าง → ดึงจาก branches (scraped data)
+      if (!v) {
+        const brs = Array.isArray(e.branches) ? e.branches : [];
+        for (const br of brs) {
+          const match = String(br).match(/^([A-Z]\d+)-/i);
+          if (match) { v = match[1].toUpperCase(); l = v; break; }
+        }
+      }
       if (v && !m.has(v)) m.set(v, { value: v, label: l });
     });
-    return Array.from(m.values());
+    return Array.from(m.values()).sort((a, b) => a.value.localeCompare(b.value));
   })();
   return {
     courses: arr,
@@ -1106,25 +1130,21 @@ export default function App() {
                 }}>{filtered.length.toLocaleString()}</span>
               </div>
               <div style={{ display: "flex", gap: 8, flexDirection: "column" }}>
-                {majors.length > 1 && (
-                  <select value={filterMajor} onChange={e => setFilterMajor(e.target.value)}
-                    className="filter-select" style={{ ...selectStyle, width: "100%" }}>
-                    <option value="">ทุกสาขาวิชา</option>
-                    {majors.map(m => (
-                      <option key={m.value} value={m.value}>
-                        {m.label.length > 34 ? m.label.slice(0, 34) + "…" : m.label}
-                      </option>
-                    ))}
-                  </select>
-                )}
+                <select value={filterMajor} onChange={e => setFilterMajor(e.target.value)}
+                  className="filter-select" style={{ ...selectStyle, width: "100%" }}>
+                  <option value="">ทุกสาขาวิชา</option>
+                  {majors.map(m => (
+                    <option key={m.value} value={m.value}>
+                      {m.label.length > 34 ? m.label.slice(0, 34) + "…" : m.label}
+                    </option>
+                  ))}
+                </select>
                 <div style={{ display: "flex", gap: 8, minWidth: 0 }}>
-                  {years.length > 0 && (
-                    <select value={filterYear} onChange={e => setFilterYear(e.target.value)}
-                      className="filter-select" style={selectStyle}>
-                      <option value="">ทุกปีรหัส</option>
-                      {years.map(y => <option key={y} value={y}>ปี {y}</option>)}
-                    </select>
-                  )}
+                  <select value={filterYear} onChange={e => setFilterYear(e.target.value)}
+                    className="filter-select" style={selectStyle}>
+                    <option value="">ทุกปีรหัส</option>
+                    {years.map(y => <option key={y} value={y}>ปี {y}</option>)}
+                  </select>
                   <select value={filterDay} onChange={e => setFilterDay(e.target.value)}
                     className="filter-select" style={selectStyle}>
                     <option value="">ทุกวัน</option>
@@ -1141,49 +1161,4 @@ export default function App() {
               </div>
               <div style={{ position: "relative" }}>
                 <svg style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}
-                  width={13} height={13} viewBox="0 0 24 24" fill="none" stroke={P.textHint} strokeWidth={2.2}>
-                  <circle cx={11} cy={11} r={8} /><line x1={21} y1={21} x2={16.65} y2={16.65} />
-                </svg>
-                <input
-                  type="text"
-                  placeholder="ค้นหารหัส ชื่อ หมู่ อาจารย์ ห้อง..."
-                  value={query} onChange={e => setQuery(e.target.value)}
-                  style={{
-                    width: "100%", padding: "7px 10px 7px 30px", fontSize: 13,
-                    border: `1px solid ${P.border}`, borderRadius: 10, outline: "none",
-                    boxSizing: "border-box", background: P.rowBg, color: P.textPrimary,
-                  }}
-                  onFocus={e => e.target.style.borderColor = P.accentMid}
-                  onBlur={e => e.target.style.borderColor = P.border}
-                />
-              </div>
-              <div className="course-list-scroll" style={{ display: "flex", flexDirection: "column", gap: 6, paddingRight: 2 }}>
-                {filtered.length === 0 && (
-                  <p style={{ textAlign: "center", fontSize: 13, color: P.textHint, padding: "36px 0", margin: 0 }}>
-                    ไม่พบรายวิชา
-                  </p>
-                )}
-                {filtered.map(course => (
-                  <CourseCard
-                    key={course.id}
-                    course={course}
-                    isSelected={selected.includes(course.id)}
-                    isConflict={
-                      !selected.includes(course.id) &&
-                      selectedCourses.some(c => hasConflict(c, course))
-                    }
-                    isDuplicateCode={
-                      !selected.includes(course.id) &&
-                      selectedCodes.has(course.code)
-                    }
-                    onToggle={toggle}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+                  width={13} height={13} viewBox="0 0 24 24" f
