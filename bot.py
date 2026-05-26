@@ -917,3 +917,493 @@ if __name__ == "__main__":
             lab   = f"{c['lab_day']} {c['lab_start']}-{c['lab_end']} {c['lab_room']}"
             seats = str(c['seats_total']) + '/' + str(c['seats_enrolled'])
             print(f"    {c['code']} s{c['sec']} lec={lec} lab={lab} seats={seats} br={c['branches']}")
+
+    print(f"\n{'ALL PASSED' if all_pass else 'SOME FAILED'}")
+    if not all_pass:
+        exit(1)
+
+    if args.test:
+        exit(0)   # --test: stop here, don't open browser
+
+    if args.publish:
+        ok = publish_staging()
+        exit(0 if ok else 1)
+
+    # ── Run scraper ──────────────────────────────────────────────────────────
+    run(mode=args.mode)
+
+
+def scrape_main_page(driver, wait):
+    """
+    Navigate to URL_MAIN and scrape all semesters.
+    Returns (courses_list, semesters_list).
+    """
+    print(f"  Navigating to {URL_MAIN}")
+    driver.get(URL_MAIN)
+    time.sleep(4)
+
+    all_courses = []
+    semesters   = []
+
+    # Detect year/semester selectors
+    try:
+        year_sel  = Select(driver.find_element(By.NAME, "acadyear"))
+        year_opts = [(o.get_attribute("value"), o.text.strip())
+                     for o in year_sel.options if o.get_attribute("value")]
+    except Exception:
+        year_opts = []
+
+    try:
+        sem_sel  = Select(driver.find_element(By.NAME, "semester"))
+        sem_opts = [(o.get_attribute("value"), o.text.strip())
+                    for o in sem_sel.options if o.get_attribute("value")]
+    except Exception:
+        sem_opts = []
+
+    print(f"  years={[y for y,_ in year_opts]}  sems={[s for s,_ in sem_opts]}")
+
+    combos = [(yv, yt, sv, st)
+              for yv, yt in (year_opts or [("", "")])
+              for sv, st in (sem_opts  or [("", "")])]
+
+    if not combos:
+        combos = [("", "", "", "")]
+
+    for yv, yt, sv, st in combos:
+        sem_label = f"{yt}/{st}".strip("/").strip()
+        print(f"  [scrape_main] {sem_label or 'current'}")
+        try:
+            if yv:
+                Select(driver.find_element(By.NAME, "acadyear")).select_by_value(yv)
+                time.sleep(1)
+            if sv:
+                Select(driver.find_element(By.NAME, "semester")).select_by_value(sv)
+                time.sleep(1)
+            # Submit
+            for sel in ["input[type='submit']", "button[type='submit']", "input[name='Submit']"]:
+                try:
+                    driver.find_element(By.CSS_SELECTOR, sel).click()
+                    break
+                except Exception:
+                    pass
+            time.sleep(4)
+
+            page_html = driver.page_source
+            soup = BeautifulSoup(page_html, "html.parser")
+            n_rows = len(soup.find_all("tr"))
+            print(f"    rows={n_rows}")
+            if n_rows <= 4:
+                print(f"    [skip] too few rows")
+                continue
+
+            courses = parse_main_html(page_html, sem_label)
+            if courses:
+                all_courses.extend(courses)
+                semesters.append(sem_label)
+                print(f"    → {len(courses)} sections")
+        except Exception as e:
+            print(f"    ERROR: {e}")
+            traceback.print_exc()
+
+    return all_courses, semesters
+
+
+def scrape_major_year(driver, wait, major_value, major_label, std_year):
+    """
+    Scrape FM page for one major × year combination.
+    Returns list of course dicts.
+    """
+    try:
+        driver.get(URL_FM)
+        time.sleep(2)
+
+        sel = Select(wait.until(EC.presence_of_element_located((By.NAME, "major_id"))))
+        sel.select_by_value(major_value)
+        time.sleep(1)
+
+        try:
+            Select(driver.find_element(By.NAME, "std_year")).select_by_value(std_year)
+            time.sleep(1)
+        except Exception:
+            pass
+
+        for s in ["input[type='submit']", "button[type='submit']", "input[name='Submit']"]:
+            try:
+                driver.find_element(By.CSS_SELECTOR, s).click()
+                break
+            except Exception:
+                pass
+        time.sleep(3)
+
+        page_html = driver.page_source
+        soup = BeautifulSoup(page_html, "html.parser")
+        n_rows = len(soup.find_all("tr"))
+        print(f"    {major_label} yr{std_year}: rows={n_rows}", end="")
+
+        if n_rows <= 4:
+            print(" [skip]")
+            return []
+
+        sem_label = f"FM/{major_label}/{std_year}"
+        courses   = parse_main_html(page_html, sem_label)
+        for c in courses:
+            c["major_label"] = major_label
+            c["major_value"] = major_value
+            c["year"]        = std_year
+
+        print(f" → {len(courses)} sections")
+        return courses
+
+    except Exception as e:
+        print(f" ERROR: {e}")
+        traceback.print_exc()
+        return []
+
+
+# ── Publish helper ────────────────────────────────────────────────────────────
+
+def publish_staging():
+    """
+    Copy staging → live after a quick sanity check.
+    Called automatically by run() if checks pass,
+    or manually via  python bot.py --publish
+    """
+    import shutil, json as _json
+
+    if not os.path.exists(OUTPUT_STAGING):
+        print(f"[publish] ERROR: staging file not found: {OUTPUT_STAGING}")
+        return False
+
+    try:
+        data = _json.loads(open(OUTPUT_STAGING, encoding="utf-8").read())
+    except Exception as e:
+        print(f"[publish] ERROR: staging file invalid JSON: {e}")
+        return False
+
+    courses = data.get("courses", [])
+    semesters = data.get("semesters", [])
+    issues = []
+    if len(courses) == 0:
+        issues.append("no courses")
+    if len(semesters) == 0:
+        issues.append("no semesters")
+    if issues:
+        print(f"[publish] BLOCKED — {', '.join(issues)}. Fix staging file first.")
+        return False
+
+    os.makedirs("public", exist_ok=True)
+    shutil.copy2(OUTPUT_STAGING, OUTPUT_LIVE)
+    print(f"[publish] ✓ {OUTPUT_STAGING} → {OUTPUT_LIVE}  (courses={len(courses)}, semesters={len(semesters)})")
+    return True
+
+
+# ── Main runner ───────────────────────────────────────────────────────────────
+
+def run(mode="main"):
+    """
+    mode="main"  → scrape index.php (all courses, all majors, with lab+seats)
+    mode="fm"    → scrape index.php?flag=FM (per-major/year, no lab/seats) [fallback]
+    mode="both"  → scrape main page first, then FM page, merge by code+sec
+    """
+    opts = webdriver.ChromeOptions()
+    opts.add_argument("--headless=new")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--ignore-certificate-errors")
+    opts.add_argument("--ignore-ssl-errors")
+    opts.set_capability("acceptInsecureCerts", True)
+
+    # Anti-detection: hide Selenium/automation fingerprint
+    opts.add_argument("--disable-blink-features=AutomationControlled")
+    opts.add_experimental_option("excludeSwitches", ["enable-automation"])
+    opts.add_experimental_option("useAutomationExtension", False)
+    opts.add_argument(
+        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    )
+
+    driver = webdriver.Chrome(
+        service=Service(ChromeDriverManager().install()),
+        options=opts,
+    )
+    # Patch navigator.webdriver = undefined so site JS can't detect headless
+    driver.execute_cdp_cmd(
+        "Page.addScriptToEvaluateOnNewDocument",
+        {"source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"},
+    )
+    wait = WebDriverWait(driver, WAIT_SECS)
+
+    try:
+        all_courses = []
+        semesters   = []
+
+        # ── Mode: main page ──────────────────────────────────────────────────
+        if mode in ("main", "both"):
+            print("[MODE] scraping main page (all courses)")
+            courses, sems = scrape_main_page(driver, wait)
+            all_courses.extend(courses)
+            semesters.extend(sems)
+            print(f"  main page total: {len(courses)} courses")
+
+        # ── Mode: FM page (supplement / fallback) ────────────────────────────
+        if mode in ("fm", "both") or (mode == "main" and not all_courses):
+            if mode == "main" and not all_courses:
+                print("[WARN] main page returned 0 courses, falling back to FM mode")
+            else:
+                print("[MODE] scraping FM page (per-major/year)")
+
+            latest_year = get_latest_year()
+            year_strs   = [str(y) for y in range(YEAR_START, latest_year + 1)]
+
+            driver.get(URL_FM)
+            time.sleep(3)
+            sel_el = wait.until(EC.presence_of_element_located((By.NAME, "major_id")))
+            all_opts  = [
+                (o.get_attribute("value"), o.text.strip())
+                for o in sel_el.find_elements(By.TAG_NAME, "option")
+            ]
+            major_opts = [(v, t) for v, t in all_opts if v and v.endswith("_B")]
+            print(f"  majors: {len(major_opts)}")
+
+            fm_courses = []
+            for std_year in year_strs:
+                print(f"\n--- year {std_year} ---")
+                for mv, ml in major_opts:
+                    courses = scrape_major_year(driver, wait, mv, ml, std_year)
+                    fm_courses.extend(courses)
+                    time.sleep(1)
+
+            if mode == "fm":
+                all_courses = fm_courses
+            else:
+                # mode="both": merge FM into main (FM has better instructor/time data per-section)
+                fm_lookup = {f"{c['code']}_{c['sec']}": c for c in fm_courses}
+                for c in all_courses:
+                    key = f"{c['code']}_{c['sec']}"
+                    if key in fm_lookup:
+                        fm = fm_lookup[key]
+                        # Fill missing fields from FM data
+                        if not c["start"] and fm["start"]:
+                            c["start"] = fm["start"]
+                            c["end"]   = fm["end"]
+                        if not c["instructor"] or c["instructor"] == "-":
+                            c["instructor"] = fm["instructor"]
+                        if not c["year"]:
+                            c["year"] = fm["year"]
+                        if not c["major_value"]:
+                            c["major_value"] = fm["major_value"]
+                        if not c["major_label"]:
+                            c["major_label"] = fm["major_label"]
+                all_courses.extend([c for k, c in fm_lookup.items()
+                                     if not any(f"{x['code']}_{x['sec']}" == k for x in all_courses)])
+
+        # ── Save output ──────────────────────────────────────────────────────
+        os.makedirs("public", exist_ok=True)
+
+        # Build majors list from unique branch/major_label values
+        majors = []
+        seen_labels = set()
+        for c in all_courses:
+            lbl = c.get("major_label", "")
+            val = c.get("major_value", "")
+            if lbl and lbl not in seen_labels:
+                majors.append({"value": val or lbl, "label": lbl})
+                seen_labels.add(lbl)
+
+        output = {
+            "courses":    all_courses,
+            "majors":     majors,
+            "semesters":  semesters,
+            "total":      len(all_courses),
+            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "mode":       mode,
+        }
+        # ── Write to staging first ───────────────────────────────────────────
+        os.makedirs("data", exist_ok=True)
+        with open(OUTPUT_STAGING, "w", encoding="utf-8") as f:
+            json.dump(output, f, ensure_ascii=False, indent=2)
+
+        valid   = [c for c in all_courses if c["start"]]
+        has_lab = [c for c in all_courses if c.get("lab_start")]
+        has_cr  = [c for c in all_courses if c.get("credit", 0) != 3]
+        print(f"\nSTAGING saved → {OUTPUT_STAGING}")
+        print(f"  total={len(all_courses)}  has_time={len(valid)}  has_lab={len(has_lab)}  non-default-credit={len(has_cr)}")
+        for c in all_courses[:3]:
+            print(" ", json.dumps(c, ensure_ascii=False))
+
+        # ── Sanity check before publishing ──────────────────────────────────
+        issues = []
+        if len(all_courses) == 0:
+            issues.append("no courses scraped")
+        if len(valid) < len(all_courses) * 0.5:
+            issues.append(f"too many courses missing time ({len(valid)}/{len(all_courses)})")
+        if len(output.get("semesters", [])) == 0:
+            issues.append("no semesters found")
+
+        if issues:
+            print(f"\n[WARN] Staging NOT published — failed checks: {', '.join(issues)}")
+            print(f"       Review {OUTPUT_STAGING} manually, then run --publish to deploy.")
+        else:
+            publish_staging()
+
+    except Exception:
+        traceback.print_exc()
+        driver.save_screenshot("debug_error.png")
+    finally:
+        driver.quit()
+        print("[DONE]")
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="KU Timetable Scraper")
+    parser.add_argument(
+        "--mode", choices=["main", "fm", "both"], default="main",
+        help="main=index.php (all courses), fm=FM page (per-major), both=merge"
+    )
+    parser.add_argument("--test",    action="store_true", help="run self-test only, no browser")
+    parser.add_argument("--publish", action="store_true", help="publish staging → live without re-scraping")
+    args = parser.parse_args()
+
+    try:
+        import bs4
+    except ImportError:
+        print("pip install beautifulsoup4 selenium webdriver-manager")
+        exit(1)
+
+    # ── Self-test ────────────────────────────────────────────────────────────
+    print("=== self-test ===")
+    all_pass = True
+
+    time_tests = [
+        ("9.3-12.3",    ("09:30", "12:30")),
+        ("09:30-12:30", ("09:30", "12:30")),
+        ("800-1200",    ("08:00", "12:00")),
+        ("1330-1630",   ("13:30", "16:30")),
+        ("8-11",        ("08:00", "11:00")),
+    ]
+    for inp, exp in time_tests:
+        got = parse_time_range(inp)
+        ok = got == exp
+        if not ok: all_pass = False
+        print(f"  {'OK' if ok else 'FAIL'} time({inp!r}) -> {got}")
+
+    credit_tests = [("3 (3-0)", 3), ("1 (0-3-0)", 1), ("3(2-2-5)", 3), ("2", 2)]
+    for inp, exp in credit_tests:
+        got = extract_credit(inp)
+        ok = got == exp
+        if not ok: all_pass = False
+        print(f"  {'OK' if ok else 'FAIL'} credit({inp!r}) -> {got}")
+
+    seat_tests = [
+        ("30/25",    (30, 25)),
+        ("30(25)",   (30, 25)),
+        ("30  25",   (30, 25)),
+        ("40",       (40, -1)),
+        ("รับ30 นั่ง25", (30, 25)),
+    ]
+    for inp, exp in seat_tests:
+        got = parse_seats(inp)
+        ok = got == exp
+        if not ok: all_pass = False
+        print(f"  {'OK' if ok else 'FAIL'} seats({inp!r}) -> {got}")
+
+    # Rowspan test (main-page structure)
+    # ── Main page parser test (real 15-col structure) ───────────────────────
+    # Header row 1: ที่(rs2)|รหัสวิชา(rs2)|ชื่อวิชา(rs2)|หน่วยกิต(rs2)|บรรยาย(cs3)|สาขา(rs2)|จำนวน(rs2)|ปฏิบัติ(cs3)|สาขา(rs2)|จำนวน(rs2)|อาจารย์(rs2)
+    # Header row 2: หมู่|วัน-เวลา|ห้อง | | | หมู่|วัน-เวลา|ห้อง
+    # Data row 1a: course 01355101 sec1, branch EE-1
+    # Data row 1b: course 01355101 sec1, branch EE-2 (rowspan sub-row)
+    # Data row 2:  course 01355102 sec1, branch EE-1
+    test_html_main = (
+        "<table>"
+        "<tr>"
+        "<th rowspan='2'>ที่</th>"
+        "<th rowspan='2'>รหัสวิชา</th>"
+        "<th rowspan='2'>ชื่อวิชา</th>"
+        "<th rowspan='2'>หน่วยกิต</th>"
+        "<th colspan='3'>บรรยาย</th>"
+        "<th rowspan='2'>สาขา-ชั้นปี</th>"
+        "<th rowspan='2'>จำนวน(คน)</th>"
+        "<th colspan='3'>ปฏิบัติ</th>"
+        "<th rowspan='2'>สาขา-ชั้นปี</th>"
+        "<th rowspan='2'>จำนวน(คน)</th>"
+        "<th rowspan='2'>อาจารย์</th>"
+        "</tr>"
+        "<tr>"
+        "<th>หมู่</th><th>วัน-เวลา</th><th>ห้อง</th>"
+        "<th>หมู่</th><th>วัน-เวลา</th><th>ห้อง</th>"
+        "</tr>"
+        # course 01355101-67, sec 1, branch EE-1
+        "<tr>"
+        "<td rowspan='2'>1</td>"
+        "<td rowspan='2'>01355101-67</td>"
+        "<td rowspan='2'>วิศวกรรมไฟฟ้า</td>"
+        "<td rowspan='2'>3(3-0-6)</td>"
+        "<td rowspan='2'>1</td>"
+        "<td rowspan='2'>จ.09.00-12.00</td>"
+        "<td rowspan='2'>A101</td>"
+        "<td>EE-1</td>"
+        "<td>30/20</td>"
+        "<td rowspan='2'>1</td>"
+        "<td rowspan='2'>พ.13.00-16.00</td>"
+        "<td rowspan='2'>L201</td>"
+        "<td></td><td></td>"
+        "<td rowspan='2'>อ.สมชาย</td>"
+        "</tr>"
+        # sub-row: branch EE-2
+        "<tr>"
+        "<td>EE-2</td><td>25/10</td>"
+        "<td></td><td></td>"
+        "</tr>"
+        # course 01355102-67, sec 1, branch EE-1
+        "<tr>"
+        "<td>2</td>"
+        "<td>01355102-67</td>"
+        "<td>วงจรไฟฟ้า</td>"
+        "<td>2(2-0-4)</td>"
+        "<td>1</td>"
+        "<td>จ.13.00-15.00</td>"
+        "<td>A102</td>"
+        "<td>EE-1</td>"
+        "<td>25/15</td>"
+        "<td></td><td></td><td></td>"
+        "<td></td><td></td>"
+        "<td>อ.สมหญิง</td>"
+        "</tr>"
+        "</table>"
+    )
+    r = parse_main_html(test_html_main, "2567/1")
+    main_checks = {
+        "codes":     sorted([c["code"] for c in r]) == ["01355101", "01355102"],
+        "sec":       any(c["sec"] == "1" for c in r),
+        "lab_time":  any(c.get("lab_start") == "13:00" for c in r),
+        "branches":  any(len(c.get("branches", [])) == 2 for c in r),
+    }
+    for name, chk in main_checks.items():
+        if not chk: all_pass = False
+        print(f"  {'OK' if chk else 'FAIL'} main_parse/{name}")
+    if r:
+        for c in r:
+            lec   = f"{c['day']} {c['start']}-{c['end']} {c['room']}"
+            lab   = f"{c['lab_day']} {c['lab_start']}-{c['lab_end']} {c['lab_room']}"
+            seats = str(c['seats_total']) + '/' + str(c['seats_enrolled'])
+            print(f"    {c['code']} s{c['sec']} lec={lec} lab={lab} seats={seats} br={c['branches']}")
+
+    print(f"\n{'ALL PASSED' if all_pass else 'SOME FAILED'}")
+    if not all_pass:
+        exit(1)
+
+    if args.test:
+        exit(0)   # --test: stop here, don't open browser
+
+    if args.publish:
+        ok = publish_staging()
+        exit(0 if ok else 1)
+
+    # ── Run scraper ──────────────────────────────────────────────────────────
+    run(mode=args.mode)
