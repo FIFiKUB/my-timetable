@@ -1161,4 +1161,49 @@ export default function App() {
               </div>
               <div style={{ position: "relative" }}>
                 <svg style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}
-                  width={13} height={13} viewBox="0 0 24 24" f
+                  width={13} height={13} viewBox="0 0 24 24" fill="none" stroke={P.textHint} strokeWidth={2.2}>
+                  <circle cx={11} cy={11} r={8} /><line x1={21} y1={21} x2={16.65} y2={16.65} />
+                </svg>
+                <input
+                  type="text"
+                  placeholder="ค้นหารหัส ชื่อ หมู่ อาจารย์ ห้อง..."
+                  value={query} onChange={e => setQuery(e.target.value)}
+                  style={{
+                    width: "100%", padding: "7px 10px 7px 30px", fontSize: 13,
+                    border: `1px solid ${P.border}`, borderRadius: 10, outline: "none",
+                    boxSizing: "border-box", background: P.rowBg, color: P.textPrimary,
+                  }}
+                  onFocus={e => e.target.style.borderColor = P.accentMid}
+                  onBlur={e => e.target.style.borderColor = P.border}
+                />
+              </div>
+              <div className="course-list-scroll" style={{ display: "flex", flexDirection: "column", gap: 6, paddingRight: 2 }}>
+                {filtered.length === 0 && (
+                  <p style={{ textAlign: "center", fontSize: 13, color: P.textHint, padding: "36px 0", margin: 0 }}>
+                    ไม่พบรายวิชา
+                  </p>
+                )}
+                {filtered.map(course => (
+                  <CourseCard
+                    key={course.id}
+                    course={course}
+                    isSelected={selected.includes(course.id)}
+                    isConflict={
+                      !selected.includes(course.id) &&
+                      selectedCourses.some(c => hasConflict(c, course))
+                    }
+                    isDuplicateCode={
+                      !selected.includes(course.id) &&
+                      selectedCodes.has(course.code)
+                    }
+                    onToggle={toggle}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
