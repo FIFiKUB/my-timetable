@@ -332,6 +332,9 @@ def parse_main_html(html, semester_label=""):
                 "branches":       [],
                 "instructor":     g(row, "instructor"),
                 "semester":       semester_label,
+                "year":           "",
+                "major_label":    "",
+                "major_value":    "",
             }
             seen_key = key
 
@@ -349,6 +352,135 @@ def parse_main_html(html, semester_label=""):
               f"branches={c['branches'][:2]}")
     print(f"  [parse_main] parsed {len(results)} sections")
     return results
+
+
+# ── Scraper functions ────────────────────────────────────────────────────────
+
+def scrape_main_page(driver, wait):
+    """
+    Navigate to URL_MAIN and scrape all semesters.
+    Returns (courses_list, semesters_list).
+    """
+    print(f"  Navigating to {URL_MAIN}")
+    driver.get(URL_MAIN)
+    time.sleep(4)
+
+    all_courses = []
+    semesters   = []
+
+    # Detect year/semester selectors
+    try:
+        year_sel  = Select(driver.find_element(By.NAME, "acadyear"))
+        year_opts = [(o.get_attribute("value"), o.text.strip())
+                     for o in year_sel.options if o.get_attribute("value")]
+    except Exception:
+        year_opts = []
+
+    try:
+        sem_sel  = Select(driver.find_element(By.NAME, "semester"))
+        sem_opts = [(o.get_attribute("value"), o.text.strip())
+                    for o in sem_sel.options if o.get_attribute("value")]
+    except Exception:
+        sem_opts = []
+
+    print(f"  years={[y for y,_ in year_opts]}  sems={[s for s,_ in sem_opts]}")
+
+    combos = [(yv, yt, sv, st)
+              for yv, yt in (year_opts or [("", "")])
+              for sv, st in (sem_opts  or [("", "")])]
+
+    if not combos:
+        combos = [("", "", "", "")]
+
+    for yv, yt, sv, st in combos:
+        sem_label = f"{yt}/{st}".strip("/").strip()
+        print(f"  [scrape_main] {sem_label or 'current'}")
+        try:
+            if yv:
+                Select(driver.find_element(By.NAME, "acadyear")).select_by_value(yv)
+                time.sleep(1)
+            if sv:
+                Select(driver.find_element(By.NAME, "semester")).select_by_value(sv)
+                time.sleep(1)
+            # Submit
+            for sel in ["input[type='submit']", "button[type='submit']", "input[name='Submit']"]:
+                try:
+                    driver.find_element(By.CSS_SELECTOR, sel).click()
+                    break
+                except Exception:
+                    pass
+            time.sleep(4)
+
+            page_html = driver.page_source
+            soup = BeautifulSoup(page_html, "html.parser")
+            n_rows = len(soup.find_all("tr"))
+            print(f"    rows={n_rows}")
+            if n_rows <= 4:
+                print(f"    [skip] too few rows")
+                continue
+
+            courses = parse_main_html(page_html, sem_label)
+            if courses:
+                all_courses.extend(courses)
+                semesters.append(sem_label)
+                print(f"    → {len(courses)} sections")
+        except Exception as e:
+            print(f"    ERROR: {e}")
+            traceback.print_exc()
+
+    return all_courses, semesters
+
+
+def scrape_major_year(driver, wait, major_value, major_label, std_year):
+    """
+    Scrape FM page for one major × year combination.
+    Returns list of course dicts.
+    """
+    try:
+        driver.get(URL_FM)
+        time.sleep(2)
+
+        sel = Select(wait.until(EC.presence_of_element_located((By.NAME, "major_id"))))
+        sel.select_by_value(major_value)
+        time.sleep(1)
+
+        try:
+            Select(driver.find_element(By.NAME, "std_year")).select_by_value(std_year)
+            time.sleep(1)
+        except Exception:
+            pass
+
+        for s in ["input[type='submit']", "button[type='submit']", "input[name='Submit']"]:
+            try:
+                driver.find_element(By.CSS_SELECTOR, s).click()
+                break
+            except Exception:
+                pass
+        time.sleep(3)
+
+        page_html = driver.page_source
+        soup = BeautifulSoup(page_html, "html.parser")
+        n_rows = len(soup.find_all("tr"))
+        print(f"    {major_label} yr{std_year}: rows={n_rows}", end="")
+
+        if n_rows <= 4:
+            print(" [skip]")
+            return []
+
+        sem_label = f"FM/{major_label}/{std_year}"
+        courses   = parse_main_html(page_html, sem_label)
+        for c in courses:
+            c["major_label"] = major_label
+            c["major_value"] = major_value
+            c["year"]        = std_year
+
+        print(f" → {len(courses)} sections")
+        return courses
+
+    except Exception as e:
+        print(f" ERROR: {e}")
+        traceback.print_exc()
+        return []
 
 
 # ── Publish helper ────────────────────────────────────────────────────────────
