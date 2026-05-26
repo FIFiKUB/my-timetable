@@ -142,34 +142,109 @@ def clean_room(raw):
 
 # ── Main-page parser ─────────────────────────────────────────────────────────
 
-def build_grid(rows):
-    """Expand rowspan/colspan into a 2D list of text values."""
-    rowspan_map = {}
-    grid = []
+def get_top_rows(tbl):
+    """Return only top-level <tr> elements — skip nested table rows."""
+    rows = []
+    for child in tbl.children:
+        n = getattr(child, "name", None)
+        if n == "tr":
+            rows.append(child)
+        elif n in ("thead", "tbody", "tfoot"):
+            for r in child.children:
+                if getattr(r, "name", None) == "tr":
+                    rows.append(r)
+    return rows
+
+
+def extract_branches_from_td(td):
+    """
+    Extract list of branch codes from a สาขา-ชั้นปี cell.
+    The real KU page stores branches in a nested <table> inside the cell.
+    Falls back to plain text if no nested table.
+    """
+    if td is None:
+        return []
+    nested = td.find("table")
+    if nested:
+        branches = []
+        for tr in nested.find_all("tr"):
+            # Use direct children only so we don't recurse further
+            tds = tr.find_all(["td", "th"], recursive=False)
+            if tds:
+                txt = tds[0].get_text(strip=True)
+                if txt and txt not in branches:
+                    branches.append(txt)
+        return branches
+    # No nested table — plain text (e.g. self-test HTML)
+    txt = td.get_text(strip=True)
+    return [txt] if txt else []
+
+
+def sum_seats_from_td(td):
+    """
+    Sum seat counts from a จำนวน(ต่อกลุ่ม) cell.
+    Format in nested table: '20 (1)', '26 (2)', ...
+    Returns total int, or -1 if unparseable.
+    """
+    if td is None:
+        return -1
+    nested = td.find("table")
+    raw = ""
+    if nested:
+        raw = nested.get_text(" ", strip=True)
+    else:
+        raw = td.get_text(" ", strip=True)
+    nums = [int(m.group(1)) for m in re.finditer(r"(\d+)\s*\(\d+\)", raw)]
+    if nums:
+        return sum(nums)
+    # Fallback: try plain parse_seats on the whole text
+    tot, _ = parse_seats(raw)
+    return tot
+
+
+def build_cell_map(rows):
+    """
+    Like build_grid but stores original BeautifulSoup Tag objects
+    instead of plain text.  Uses recursive=False when finding cells
+    so nested <table> cells are not counted separately.
+    Returns list of {col_idx: Tag} dicts.
+    """
+    rowspan_map = {}   # {col_idx: (remaining_rows, Tag)}
+    result = []
     for row in rows:
-        cells = row.find_all(["td", "th"])
+        cells = row.find_all(["td", "th"], recursive=False)
         row_data = {}
         new_map = {}
-        for c_idx, (rem, txt) in rowspan_map.items():
-            row_data[c_idx] = txt
+        for c_idx, (rem, el) in rowspan_map.items():
+            row_data[c_idx] = el
             if rem > 1:
-                new_map[c_idx] = (rem - 1, txt)
+                new_map[c_idx] = (rem - 1, el)
         rowspan_map = new_map
         col_cursor = 0
         for cell in cells:
             while col_cursor in row_data:
                 col_cursor += 1
-            rs  = int(cell.get("rowspan", 1))
-            cs  = int(cell.get("colspan", 1))
-            txt = cell.get_text(" ", strip=True)
+            rs = int(cell.get("rowspan", 1))
+            cs = int(cell.get("colspan", 1))
             for c in range(col_cursor, col_cursor + cs):
-                row_data[c] = txt
+                row_data[c] = cell
                 if rs > 1:
-                    rowspan_map[c] = (rs - 1, txt)  # carry rs-1 MORE rows
+                    rowspan_map[c] = (rs - 1, cell)
             col_cursor += cs
         if row_data:
-            max_c = max(row_data.keys())
-            grid.append([row_data.get(i, "") for i in range(max_c + 1)])
+            result.append(row_data)
+    return result
+
+
+def build_grid(rows):
+    """Expand rowspan/colspan into a 2D list of text values (text version of build_cell_map)."""
+    cell_maps = build_cell_map(rows)
+    grid = []
+    for cm in cell_maps:
+        if not cm:
+            continue
+        max_c = max(cm.keys())
+        grid.append([cm[i].get_text(" ", strip=True) if i in cm else "" for i in range(max_c + 1)])
     return grid
 
 
@@ -288,34 +363,36 @@ def parse_main_html(html, semester_label=""):
         print("  [parse_main] no table found")
         return results
 
-    all_rows = target.find_all("tr")
+    # Use get_top_rows to avoid recursing into nested tables
+    all_rows = get_top_rows(target)
     print(f"  [parse_main] total rows: {len(all_rows)}")
 
     col = detect_main_page_cols(all_rows)
 
     data_rows = [r for r in all_rows
-                 if not all(c.name == "th" for c in r.find_all(["td","th"]))]
-    grid = build_grid(data_rows)
-    print(f"  [parse_main] data grid rows: {len(grid)}")
+                 if not all(c.name == "th" for c in r.find_all(["td","th"], recursive=False))]
+    cell_maps = build_cell_map(data_rows)
+    print(f"  [parse_main] data grid rows: {len(cell_maps)}")
 
-    def g(row, key):
-        c = col[key]
-        return row[c].strip() if c < len(row) else ""
+    def g(cm, key):
+        c = col.get(key, -1)
+        el = cm.get(c)
+        return el.get_text(" ", strip=True) if el else ""
 
     seen_key = None
     current  = None
 
-    for row in grid:
-        if len(row) <= col["code"]:
+    for cm in cell_maps:
+        if col["code"] not in cm:
             continue
-        code_raw = g(row, "code")
+        code_raw = g(cm, "code")
         m = re.match(r"(\d{8})(?:[- ]\d+)?", code_raw.replace(" ", ""))
         if not m:
             continue
         code = m.group(1)
 
-        sec   = g(row, "lect_sec")
-        ltime = g(row, "lect_daytime")
+        sec   = g(cm, "lect_sec")
+        ltime = g(cm, "lect_daytime")
         key   = (code, sec, ltime)
 
         if key != seen_key:
@@ -323,26 +400,27 @@ def parse_main_html(html, semester_label=""):
                 results.append(current)
 
             lday, lstart, lend = parse_daytime(ltime)
-            pday, pstart, pend = parse_daytime(g(row, "lab_daytime"))
-            tot, enr = parse_seats(g(row, "lect_seats"))
+            pday, pstart, pend = parse_daytime(g(cm, "lab_daytime"))
+            tot  = sum_seats_from_td(cm.get(col.get("lect_seats", -1)))
+            ptot = sum_seats_from_td(cm.get(col.get("lab_seats",  -1)))
 
             current = {
                 "code":           code,
-                "name":           g(row, "name"),
-                "credit":         extract_credit(g(row, "credit")),
+                "name":           g(cm, "name"),
+                "credit":         extract_credit(g(cm, "credit")),
                 "sec":            sec,
                 "day":            lday   or "",
                 "start":          lstart or "",
                 "end":            lend   or "",
-                "room":           clean_room(g(row, "lect_room")),
+                "room":           clean_room(g(cm, "lect_room")),
                 "lab_day":        pday   or "",
                 "lab_start":      pstart or "",
                 "lab_end":        pend   or "",
-                "lab_room":       clean_room(g(row, "lab_room")),
+                "lab_room":       clean_room(g(cm, "lab_room")),
                 "seats_total":    tot,
-                "seats_enrolled": enr,
-                "branches":       [],
-                "instructor":     g(row, "instructor"),
+                "seats_enrolled": -1,
+                "branches":       extract_branches_from_td(cm.get(col.get("lect_branch", -1))),
+                "instructor":     g(cm, "instructor"),
                 "semester":       semester_label,
                 "year":           "",
                 "major_label":    "",
@@ -350,9 +428,20 @@ def parse_main_html(html, semester_label=""):
             }
             seen_key = key
 
-        for br in [g(row, "lect_branch"), g(row, "lab_branch")]:
-            if br and br not in current["branches"]:
-                current["branches"].append(br)
+        # Merge additional branches from this row (handles both nested-table and
+        # plain-text sub-row styles).  extract_branches_from_td already dedupes
+        # via nested table; for plain-text cells on sub-rows we add manually.
+        for br_key in ("lect_branch", "lab_branch"):
+            br_td = cm.get(col.get(br_key, -1))
+            if br_td is None:
+                continue
+            if br_td.find("table"):
+                # Nested table already captured in current["branches"] at creation;
+                # skip to avoid duplicates.
+                continue
+            for br in extract_branches_from_td(br_td):
+                if br and br not in current["branches"]:
+                    current["branches"].append(br)
 
     if current:
         results.append(current)
@@ -828,17 +917,3 @@ if __name__ == "__main__":
             lab   = f"{c['lab_day']} {c['lab_start']}-{c['lab_end']} {c['lab_room']}"
             seats = str(c['seats_total']) + '/' + str(c['seats_enrolled'])
             print(f"    {c['code']} s{c['sec']} lec={lec} lab={lab} seats={seats} br={c['branches']}")
-
-    print(f"\n{'ALL PASSED' if all_pass else 'SOME FAILED'}")
-    if not all_pass:
-        exit(1)
-
-    if args.test:
-        exit(0)   # --test: stop here, don't open browser
-
-    if args.publish:
-        ok = publish_staging()
-        exit(0 if ok else 1)
-
-    # ── Run scraper ──────────────────────────────────────────────────────────
-    run(mode=args.mode)
