@@ -16,6 +16,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
 import time, json, re, os, traceback
+from collections import defaultdict
 from datetime import datetime
 
 URL_MAIN      = "https://misreg.csc.ku.ac.th/schedule_v2/index.php"
@@ -391,16 +392,27 @@ def parse_main_html(html, semester_label=""):
             continue
         code = m.group(1)
 
-        sec   = g(cm, "lect_sec")
-        ltime = g(cm, "lect_daytime")
-        key   = (code, sec, ltime)
+        lect_sec   = g(cm, "lect_sec")
+        lect_time  = g(cm, "lect_daytime")
+        lab_sec    = g(cm, "lab_sec")
+        lab_time   = g(cm, "lab_daytime")
+
+        # ถ้า lect ว่าง (เป็น row lab-only) ใช้ lab_sec+lab_time เป็น key
+        # ป้องกัน lab section หลายอัน (เช่น หมู่ 101,102,103) ถูก merge เป็น entry เดียว
+        if lect_sec or lect_time:
+            sec   = lect_sec
+            ltime = lect_time
+        else:
+            sec   = lab_sec
+            ltime = lab_time
+        key = (code, sec, ltime)
 
         if key != seen_key:
             if current:
                 results.append(current)
 
-            lday, lstart, lend = parse_daytime(ltime)
-            pday, pstart, pend = parse_daytime(g(cm, "lab_daytime"))
+            lday, lstart, lend = parse_daytime(lect_time)
+            pday, pstart, pend = parse_daytime(lab_time)
             tot  = sum_seats_from_td(cm.get(col.get("lect_seats", -1)))
             ptot = sum_seats_from_td(cm.get(col.get("lab_seats",  -1)))
 
@@ -461,6 +473,12 @@ def scrape_main_page(driver, wait):
     """
     Navigate to URL_MAIN and scrape all semesters.
     Returns (courses_list, semesters_list).
+
+    KU เปลี่ยน form schema (พ.ย. 2025):
+      - year: <input type="number" name="year"> (เคยเป็น <select name="acadyear">)
+      - sem: <select name="sem">  (เคยเป็น <select name="semester">)
+      - flag_status: <select name="flag_status">  (R=ป.ตรี ปกติ)
+      - submit: <input name="btnSub">
     """
     print(f"  Navigating to {URL_MAIN}")
     driver.get(URL_MAIN)
@@ -469,42 +487,35 @@ def scrape_main_page(driver, wait):
     all_courses = []
     semesters   = []
 
-    # Detect year/semester selectors
-    try:
-        year_sel  = Select(driver.find_element(By.NAME, "acadyear"))
-        year_opts = [(o.get_attribute("value"), o.text.strip())
-                     for o in year_sel.options if o.get_attribute("value")]
-    except Exception:
-        year_opts = []
-
-    try:
-        sem_sel  = Select(driver.find_element(By.NAME, "semester"))
-        sem_opts = [(o.get_attribute("value"), o.text.strip())
-                    for o in sem_sel.options if o.get_attribute("value")]
-    except Exception:
-        sem_opts = []
+    # Iterate Thai years backward from current → 2566 (oldest reasonable)
+    current_thai = datetime.now().year + 543
+    year_opts = [(str(y), str(y)) for y in range(current_thai, 2565, -1)]
+    # Semester options: ต้น=1, ปลาย=2, ฤดูร้อน=0
+    sem_opts = [("1", "ต้น"), ("2", "ปลาย"), ("0", "ฤดูร้อน")]
 
     print(f"  years={[y for y,_ in year_opts]}  sems={[s for s,_ in sem_opts]}")
 
-    combos = [(yv, yt, sv, st)
-              for yv, yt in (year_opts or [("", "")])
-              for sv, st in (sem_opts  or [("", "")])]
-
-    if not combos:
-        combos = [("", "", "", "")]
+    combos = [(yv, yt, sv, st) for yv, yt in year_opts for sv, st in sem_opts]
 
     for yv, yt, sv, st in combos:
         sem_label = f"{yt}/{st}".strip("/").strip()
         print(f"  [scrape_main] {sem_label or 'current'}")
         try:
-            if yv:
-                Select(driver.find_element(By.NAME, "acadyear")).select_by_value(yv)
-                time.sleep(1)
-            if sv:
-                Select(driver.find_element(By.NAME, "semester")).select_by_value(sv)
-                time.sleep(1)
+            driver.get(URL_MAIN)
+            time.sleep(2)
+            # year — เป็น text input ตอนนี้
+            year_el = driver.find_element(By.NAME, "year")
+            year_el.clear()
+            year_el.send_keys(yv)
+            # semester — เป็น select
+            Select(driver.find_element(By.NAME, "sem")).select_by_value(sv)
+            # program type — R = ป.ตรี ภาคปกติ
+            try:
+                Select(driver.find_element(By.NAME, "flag_status")).select_by_value("R")
+            except Exception:
+                pass
             # Submit
-            for sel in ["input[type='submit']", "button[type='submit']", "input[name='Submit']"]:
+            for sel in ["input[name='btnSub']", "input[type='submit']", "button[type='submit']"]:
                 try:
                     driver.find_element(By.CSS_SELECTOR, sel).click()
                     break
@@ -532,26 +543,155 @@ def scrape_main_page(driver, wait):
     return all_courses, semesters
 
 
-def scrape_major_year(driver, wait, major_value, major_label, std_year):
+def parse_fm_timetable_html(html, sem_label):
+    """Parse FM timetable result page — visual day×time grid format.
+
+    Returns list of course entries. Each block in grid = 1 entry.
+    Sec number heuristic:
+      - sec=1..99   → lecture
+      - sec=101..999 → lab
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    day_map = {
+        "sunday": "SUN", "monday": "MON", "tuesday": "TUE",
+        "wednesday": "WED", "thursday": "THU", "friday": "FRI", "saturday": "SAT",
+    }
+    timetable = None
+    for table in soup.find_all("table"):
+        tbody = table.find("tbody") or table
+        trows = tbody.find_all("tr", recursive=False)
+        if len(trows) >= 4:
+            fth = trows[0].find(["th", "td"])
+            if fth and "เวลา" in fth.get_text():
+                timetable = table
+                break
+    if not timetable:
+        return []
+    tbody = timetable.find("tbody") or timetable
+    rows = tbody.find_all("tr", recursive=False)
+    courses = []
+    for row in rows[2:]:
+        cells = row.find_all(["td", "th"], recursive=False)
+        if not cells:
+            continue
+        day = day_map.get(cells[0].get_text(strip=True).lower())
+        if not day:
+            continue
+        for cell in cells[1:]:
+            ct = cell.get_text(strip=True)
+            if not ct or ct in (" ", "\xa0"):
+                continue
+            for entry_html in re.split(r"={5,}", str(cell)):
+                es = BeautifulSoup(entry_html, "html.parser")
+                b = es.find("b")
+                if not b:
+                    continue
+                hdr = b.get_text(strip=True)
+                hm = re.match(
+                    r"(\d{8})(?:[-\s]\d+)?\s*(?:หมู่|Section|Sec\.?)\s*(\S+)",
+                    hdr, re.IGNORECASE
+                ) or re.match(r"(\d{8})", hdr)
+                if not hm:
+                    continue
+                code = hm.group(1)
+                sec  = hm.group(2).strip() if len(hm.groups()) >= 2 else "1"
+                start_t = end_t = room = name = instructor = ""
+                credit = 0
+                for ln in es.get_text("\n", strip=True).splitlines():
+                    ln = ln.strip()
+                    if not ln or ln == hdr or re.match(r"=+$", ln):
+                        continue
+                    tm = re.match(
+                        r"([\d.]+)\s*[-–]\s*([\d.]+)\s*น\.?\s*(?:ห้อง\s*(\S+))?", ln
+                    )
+                    if tm and not start_t:
+                        start_t = to_hhmm(tm.group(1))
+                        end_t   = to_hhmm(tm.group(2))
+                        room    = (tm.group(3) or "").strip()
+                        continue
+                    if ln.startswith("อ.") and not instructor:
+                        instructor = ln[2:].strip(); continue
+                    if not name and len(ln) > 2 and not re.match(r"^\d", ln):
+                        # เก็บ credit จาก suffix "(N)" ก่อน strip
+                        cm = re.search(r"\((\d+)\)\s*$", ln)
+                        if cm and 1 <= int(cm.group(1)) <= 15:
+                            credit = int(cm.group(1))
+                        name = re.sub(r"\s*\(\d+\)\s*$", "", ln).strip()
+                if not start_t:
+                    continue
+                # เดา lec/lab จาก sec number
+                sec_clean = re.sub(r"\(.*\)", "", sec).strip()
+                is_lab = sec_clean.isdigit() and int(sec_clean) >= 100
+                entry = {
+                    "code": code, "name": name, "sec": sec,
+                    "day": "" if is_lab else day,
+                    "start": "" if is_lab else start_t,
+                    "end": "" if is_lab else end_t,
+                    "room": "" if is_lab else room,
+                    "lab_day": day if is_lab else "",
+                    "lab_start": start_t if is_lab else "",
+                    "lab_end": end_t if is_lab else "",
+                    "lab_room": room if is_lab else "",
+                    "instructor": instructor,
+                    "credit": credit, "semester": sem_label, "year": "",
+                    "major_label": "", "major_value": "", "branches": [],
+                    "seats_total": -1, "seats_enrolled": -1,
+                }
+                courses.append(entry)
+    return courses
+
+
+def scrape_major_year(driver, wait, major_value, major_label, std_year, acad_year=None, sem="1"):
     """
     Scrape FM page for one major × year combination.
     Returns list of course dicts.
+
+    KU เปลี่ยน form schema (พ.ย. 2025):
+      - year: <input type=number name=year>  (เคย acadyear)
+      - sem:  <select name=sem>  (เคย semester)
+      - major_id: <select name=major_id> (เหมือนเดิม)
+      - std_year: <input type=number name=std_year>  (เคย select)
+      - flag_status: <input type=radio name=flag_status>  R/E
+      - submit: <input name=btnMajor>  (เคย Submit)
     """
     try:
         driver.get(URL_FM)
         time.sleep(2)
 
-        sel = Select(wait.until(EC.presence_of_element_located((By.NAME, "major_id"))))
-        sel.select_by_value(major_value)
-        time.sleep(1)
-
+        # 1) ปีการศึกษา (year text input)
+        if acad_year:
+            try:
+                yel = driver.find_element(By.NAME, "year")
+                yel.clear()
+                yel.send_keys(str(acad_year))
+            except Exception:
+                pass
+        # 2) ภาค (sem select)
         try:
-            Select(driver.find_element(By.NAME, "std_year")).select_by_value(std_year)
-            time.sleep(1)
+            Select(driver.find_element(By.NAME, "sem")).select_by_value(sem)
         except Exception:
             pass
-
-        for s in ["input[type='submit']", "button[type='submit']", "input[name='Submit']"]:
+        # 3) major_id (select)
+        sel = Select(wait.until(EC.presence_of_element_located((By.NAME, "major_id"))))
+        sel.select_by_value(major_value)
+        time.sleep(0.5)
+        # 4) std_year — เป็น text input ตอนนี้ (เคย select)
+        try:
+            ynel = driver.find_element(By.NAME, "std_year")
+            ynel.clear()
+            ynel.send_keys(str(std_year))
+        except Exception:
+            pass
+        # 5) flag_status R (ป.ตรี ปกติ) — radio button
+        try:
+            radio = driver.find_element(By.CSS_SELECTOR, "input[name='flag_status'][value='R']")
+            if not radio.is_selected():
+                radio.click()
+        except Exception:
+            pass
+        time.sleep(0.3)
+        # Submit — เปลี่ยนเป็น btnMajor
+        for s in ["input[name='btnMajor']", "input[type='submit']", "button[type='submit']"]:
             try:
                 driver.find_element(By.CSS_SELECTOR, s).click()
                 break
@@ -562,17 +702,19 @@ def scrape_major_year(driver, wait, major_value, major_label, std_year):
         page_html = driver.page_source
         soup = BeautifulSoup(page_html, "html.parser")
         n_rows = len(soup.find_all("tr"))
-        print(f"    {major_label} yr{std_year}: rows={n_rows}", end="")
+        print(f"    {major_label} yr{std_year} ({acad_year}/{sem}): rows={n_rows}", end="")
 
         if n_rows <= 4:
             print(" [skip]")
             return []
 
-        sem_label = f"FM/{major_label}/{std_year}"
-        courses   = parse_main_html(page_html, sem_label)
+        sem_label = f"FM/{major_label}/{std_year}/{acad_year}/{sem}"
+        # FM page เป็น day×time grid (ไม่ใช่ list table) ใช้ parser แยก
+        courses   = parse_fm_timetable_html(page_html, sem_label)
+        clean_mv  = re.sub(r"_[BMD]$", "", major_value)   # strip _B suffix
         for c in courses:
             c["major_label"] = major_label
-            c["major_value"] = major_value
+            c["major_value"] = clean_mv
             c["year"]        = std_year
 
         print(f" → {len(courses)} sections")
@@ -679,6 +821,11 @@ def run(mode="main"):
 
             latest_year = get_latest_year()
             year_strs   = [str(y) for y in range(YEAR_START, latest_year + 1)]
+            # ปีการศึกษา (acad_year) — ลองจาก current Thai year ย้อนกลับไป 2566
+            current_thai = datetime.now().year + 543
+            acad_years = [str(y) for y in range(current_thai, 2565, -1)]
+            # ภาคการศึกษา — เอา ต้น เป็นหลัก (1) ก็พอ (FM page = "currently registering")
+            sem_strs = ["1"]   # หรือ ["1", "2", "0"] ถ้าอยากครบแต่ ช้ามาก
 
             driver.get(URL_FM)
             time.sleep(3)
@@ -688,52 +835,123 @@ def run(mode="main"):
                 for o in sel_el.find_elements(By.TAG_NAME, "option")
             ]
             major_opts = [(v, t) for v, t in all_opts if v and v.endswith("_B")]
-            print(f"  majors: {len(major_opts)}")
+            print(f"  majors: {len(major_opts)}, acad_years: {acad_years}, sems: {sem_strs}")
 
             fm_courses = []
-            for std_year in year_strs:
-                print(f"\n--- year {std_year} ---")
-                for mv, ml in major_opts:
-                    courses = scrape_major_year(driver, wait, mv, ml, std_year)
-                    fm_courses.extend(courses)
-                    time.sleep(1)
+            for acad_year in acad_years:
+                for sem in sem_strs:
+                    for std_year in year_strs:
+                        print(f"\n--- acad={acad_year}/{sem} std_year={std_year} ---")
+                        for mv, ml in major_opts:
+                            courses = scrape_major_year(driver, wait, mv, ml, std_year, acad_year, sem)
+                            fm_courses.extend(courses)
+                            time.sleep(0.5)
+
+            # Build FM lookup as dict[course_key] → list[fm_entry] (multi-major support)
+            fm_multi = defaultdict(list)
+            for c in fm_courses:
+                fm_multi[f"{c['code']}_{c['sec']}"].append(c)
 
             if mode == "fm":
-                all_courses = fm_courses
+                # ใน mode fm — สร้าง 1 entry ต่อ course key + รวม (major,year) tuples
+                deduped = []
+                for key, group in fm_multi.items():
+                    c = dict(group[0])    # copy
+                    tuples = set(c.get("branches", []))
+                    for g in group:
+                        mv, yr = g.get("major_value", ""), g.get("year", "")
+                        if mv and yr:
+                            tuples.add(f"{mv}-{yr}")
+                    c["branches"] = sorted(tuples)
+                    c["major_value"] = ""   # ให้ frontend ดึงจาก branches เอง
+                    c["major_label"] = ""
+                    deduped.append(c)
+                all_courses = deduped
             else:
-                # mode="both": merge FM into main (FM has better instructor/time data per-section)
-                fm_lookup = {f"{c['code']}_{c['sec']}": c for c in fm_courses}
+                # mode="both" — FM tuples เป็น authoritative (KU แสดงจริง ๆ ตรง major-year ไหน)
+                # main เก็บไว้แค่ lab+seats+credit ที่ FM ไม่มี
+                main_keys = set()
                 for c in all_courses:
                     key = f"{c['code']}_{c['sec']}"
-                    if key in fm_lookup:
-                        fm = fm_lookup[key]
-                        # Fill missing fields from FM data
+                    main_keys.add(key)
+                    if key in fm_multi:
+                        # ใช้ FM tuples แทน main branches (กำจัด wildcards B-0 ที่ over-include)
+                        fm_tuples = set()
+                        for g in fm_multi[key]:
+                            mv, yr = g.get("major_value", ""), g.get("year", "")
+                            if mv and yr:
+                                fm_tuples.add(f"{mv}-{yr}")
+                        if fm_tuples:
+                            c["branches"] = sorted(fm_tuples)
+                        # เติมข้อมูลที่ขาด
+                        fm = fm_multi[key][0]
                         if not c["start"] and fm["start"]:
                             c["start"] = fm["start"]
                             c["end"]   = fm["end"]
-                        if not c["instructor"] or c["instructor"] == "-":
+                        if (not c["instructor"] or c["instructor"] == "-") and fm.get("instructor"):
                             c["instructor"] = fm["instructor"]
-                        if not c["year"]:
-                            c["year"] = fm["year"]
-                        if not c["major_value"]:
-                            c["major_value"] = fm["major_value"]
-                        if not c["major_label"]:
-                            c["major_label"] = fm["major_label"]
-                all_courses.extend([c for k, c in fm_lookup.items()
-                                     if not any(f"{x['code']}_{x['sec']}" == k for x in all_courses)])
+                # courses ที่อยู่ใน FM แต่ไม่อยู่ใน main → เพิ่มเข้า all_courses
+                for key, group in fm_multi.items():
+                    if key in main_keys:
+                        continue
+                    c = dict(group[0])
+                    tuples = set(c.get("branches", []))
+                    for g in group:
+                        mv, yr = g.get("major_value", ""), g.get("year", "")
+                        if mv and yr:
+                            tuples.add(f"{mv}-{yr}")
+                    c["branches"] = sorted(tuples)
+                    c["major_value"] = ""
+                    c["major_label"] = ""
+                    all_courses.append(c)
 
         # ── Save output ──────────────────────────────────────────────────────
         os.makedirs("public", exist_ok=True)
 
-        # Build majors list from unique branch/major_label values
-        majors = []
-        seen_labels = set()
+        # ── Fetch FM dropdown for full major name mapping (always) ──
+        # mapping code → ชื่อไทยเต็ม (ใช้สร้าง majors list + เติม major_label)
+        fm_major_map = {}    # {"A5201": "เทคโนโลยีและการจัดการสิ่งแวดล้อม"}
+        try:
+            print("\n[FETCH] FM major dropdown (for full names)")
+            driver.get(URL_FM)
+            time.sleep(2)
+            sel_el = wait.until(EC.presence_of_element_located((By.NAME, "major_id")))
+            for o in sel_el.find_elements(By.TAG_NAME, "option"):
+                v = o.get_attribute("value")
+                t = o.text.strip()
+                if v and v.endswith("_B") and t:
+                    fm_major_map[v[:-2]] = t   # strip "_B"
+            print(f"  → got {len(fm_major_map)} major names")
+        except Exception as e:
+            print(f"  WARN: failed to fetch FM majors: {e}")
+
+        # Enrich each course's major_value/major_label จาก branches[0]
         for c in all_courses:
-            lbl = c.get("major_label", "")
-            val = c.get("major_value", "")
-            if lbl and lbl not in seen_labels:
-                majors.append({"value": val or lbl, "label": lbl})
-                seen_labels.add(lbl)
+            if c.get("major_label") and c.get("major_value"):
+                continue  # already has (จาก FM scrape ใน mode both/fm)
+            brs = c.get("branches", [])
+            if not brs:
+                continue
+            m = re.match(r"([A-Z]\d+)", str(brs[0]))
+            if not m:
+                continue
+            code = m.group(1)
+            if not c.get("major_value"):
+                c["major_value"] = code
+            if not c.get("major_label"):
+                c["major_label"] = fm_major_map.get(code, code)
+
+        # Build majors list — เอาเฉพาะที่มีวิชาจริง + ใช้ชื่อเต็มถ้ามี
+        used = {}   # code → label
+        for c in all_courses:
+            v = c.get("major_value", "")
+            l = c.get("major_label", "")
+            if v and v not in used:
+                used[v] = l or fm_major_map.get(v, v)
+        majors = sorted(
+            [{"value": v, "label": l} for v, l in used.items()],
+            key=lambda m: m["label"]
+        )
 
         output = {
             "courses":    all_courses,
@@ -932,478 +1150,3 @@ if __name__ == "__main__":
     # ── Run scraper ──────────────────────────────────────────────────────────
     run(mode=args.mode)
 
-
-def scrape_main_page(driver, wait):
-    """
-    Navigate to URL_MAIN and scrape all semesters.
-    Returns (courses_list, semesters_list).
-    """
-    print(f"  Navigating to {URL_MAIN}")
-    driver.get(URL_MAIN)
-    time.sleep(4)
-
-    all_courses = []
-    semesters   = []
-
-    # Detect year/semester selectors
-    try:
-        year_sel  = Select(driver.find_element(By.NAME, "acadyear"))
-        year_opts = [(o.get_attribute("value"), o.text.strip())
-                     for o in year_sel.options if o.get_attribute("value")]
-    except Exception:
-        year_opts = []
-
-    try:
-        sem_sel  = Select(driver.find_element(By.NAME, "semester"))
-        sem_opts = [(o.get_attribute("value"), o.text.strip())
-                    for o in sem_sel.options if o.get_attribute("value")]
-    except Exception:
-        sem_opts = []
-
-    print(f"  years={[y for y,_ in year_opts]}  sems={[s for s,_ in sem_opts]}")
-
-    combos = [(yv, yt, sv, st)
-              for yv, yt in (year_opts or [("", "")])
-              for sv, st in (sem_opts  or [("", "")])]
-
-    if not combos:
-        combos = [("", "", "", "")]
-
-    for yv, yt, sv, st in combos:
-        sem_label = f"{yt}/{st}".strip("/").strip()
-        print(f"  [scrape_main] {sem_label or 'current'}")
-        try:
-            if yv:
-                Select(driver.find_element(By.NAME, "acadyear")).select_by_value(yv)
-                time.sleep(1)
-            if sv:
-                Select(driver.find_element(By.NAME, "semester")).select_by_value(sv)
-                time.sleep(1)
-            # Submit
-            for sel in ["input[type='submit']", "button[type='submit']", "input[name='Submit']"]:
-                try:
-                    driver.find_element(By.CSS_SELECTOR, sel).click()
-                    break
-                except Exception:
-                    pass
-            time.sleep(4)
-
-            page_html = driver.page_source
-            soup = BeautifulSoup(page_html, "html.parser")
-            n_rows = len(soup.find_all("tr"))
-            print(f"    rows={n_rows}")
-            if n_rows <= 4:
-                print(f"    [skip] too few rows")
-                continue
-
-            courses = parse_main_html(page_html, sem_label)
-            if courses:
-                all_courses.extend(courses)
-                semesters.append(sem_label)
-                print(f"    → {len(courses)} sections")
-        except Exception as e:
-            print(f"    ERROR: {e}")
-            traceback.print_exc()
-
-    return all_courses, semesters
-
-
-def scrape_major_year(driver, wait, major_value, major_label, std_year):
-    """
-    Scrape FM page for one major × year combination.
-    Returns list of course dicts.
-    """
-    try:
-        driver.get(URL_FM)
-        time.sleep(2)
-
-        sel = Select(wait.until(EC.presence_of_element_located((By.NAME, "major_id"))))
-        sel.select_by_value(major_value)
-        time.sleep(1)
-
-        try:
-            Select(driver.find_element(By.NAME, "std_year")).select_by_value(std_year)
-            time.sleep(1)
-        except Exception:
-            pass
-
-        for s in ["input[type='submit']", "button[type='submit']", "input[name='Submit']"]:
-            try:
-                driver.find_element(By.CSS_SELECTOR, s).click()
-                break
-            except Exception:
-                pass
-        time.sleep(3)
-
-        page_html = driver.page_source
-        soup = BeautifulSoup(page_html, "html.parser")
-        n_rows = len(soup.find_all("tr"))
-        print(f"    {major_label} yr{std_year}: rows={n_rows}", end="")
-
-        if n_rows <= 4:
-            print(" [skip]")
-            return []
-
-        sem_label = f"FM/{major_label}/{std_year}"
-        courses   = parse_main_html(page_html, sem_label)
-        for c in courses:
-            c["major_label"] = major_label
-            c["major_value"] = major_value
-            c["year"]        = std_year
-
-        print(f" → {len(courses)} sections")
-        return courses
-
-    except Exception as e:
-        print(f" ERROR: {e}")
-        traceback.print_exc()
-        return []
-
-
-# ── Publish helper ────────────────────────────────────────────────────────────
-
-def publish_staging():
-    """
-    Copy staging → live after a quick sanity check.
-    Called automatically by run() if checks pass,
-    or manually via  python bot.py --publish
-    """
-    import shutil, json as _json
-
-    if not os.path.exists(OUTPUT_STAGING):
-        print(f"[publish] ERROR: staging file not found: {OUTPUT_STAGING}")
-        return False
-
-    try:
-        data = _json.loads(open(OUTPUT_STAGING, encoding="utf-8").read())
-    except Exception as e:
-        print(f"[publish] ERROR: staging file invalid JSON: {e}")
-        return False
-
-    courses = data.get("courses", [])
-    semesters = data.get("semesters", [])
-    issues = []
-    if len(courses) == 0:
-        issues.append("no courses")
-    if len(semesters) == 0:
-        issues.append("no semesters")
-    if issues:
-        print(f"[publish] BLOCKED — {', '.join(issues)}. Fix staging file first.")
-        return False
-
-    os.makedirs("public", exist_ok=True)
-    shutil.copy2(OUTPUT_STAGING, OUTPUT_LIVE)
-    print(f"[publish] ✓ {OUTPUT_STAGING} → {OUTPUT_LIVE}  (courses={len(courses)}, semesters={len(semesters)})")
-    return True
-
-
-# ── Main runner ───────────────────────────────────────────────────────────────
-
-def run(mode="main"):
-    """
-    mode="main"  → scrape index.php (all courses, all majors, with lab+seats)
-    mode="fm"    → scrape index.php?flag=FM (per-major/year, no lab/seats) [fallback]
-    mode="both"  → scrape main page first, then FM page, merge by code+sec
-    """
-    opts = webdriver.ChromeOptions()
-    opts.add_argument("--headless=new")
-    opts.add_argument("--no-sandbox")
-    opts.add_argument("--disable-dev-shm-usage")
-    opts.add_argument("--ignore-certificate-errors")
-    opts.add_argument("--ignore-ssl-errors")
-    opts.set_capability("acceptInsecureCerts", True)
-
-    # Anti-detection: hide Selenium/automation fingerprint
-    opts.add_argument("--disable-blink-features=AutomationControlled")
-    opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-    opts.add_experimental_option("useAutomationExtension", False)
-    opts.add_argument(
-        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    )
-
-    driver = webdriver.Chrome(
-        service=Service(ChromeDriverManager().install()),
-        options=opts,
-    )
-    # Patch navigator.webdriver = undefined so site JS can't detect headless
-    driver.execute_cdp_cmd(
-        "Page.addScriptToEvaluateOnNewDocument",
-        {"source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"},
-    )
-    wait = WebDriverWait(driver, WAIT_SECS)
-
-    try:
-        all_courses = []
-        semesters   = []
-
-        # ── Mode: main page ──────────────────────────────────────────────────
-        if mode in ("main", "both"):
-            print("[MODE] scraping main page (all courses)")
-            courses, sems = scrape_main_page(driver, wait)
-            all_courses.extend(courses)
-            semesters.extend(sems)
-            print(f"  main page total: {len(courses)} courses")
-
-        # ── Mode: FM page (supplement / fallback) ────────────────────────────
-        if mode in ("fm", "both") or (mode == "main" and not all_courses):
-            if mode == "main" and not all_courses:
-                print("[WARN] main page returned 0 courses, falling back to FM mode")
-            else:
-                print("[MODE] scraping FM page (per-major/year)")
-
-            latest_year = get_latest_year()
-            year_strs   = [str(y) for y in range(YEAR_START, latest_year + 1)]
-
-            driver.get(URL_FM)
-            time.sleep(3)
-            sel_el = wait.until(EC.presence_of_element_located((By.NAME, "major_id")))
-            all_opts  = [
-                (o.get_attribute("value"), o.text.strip())
-                for o in sel_el.find_elements(By.TAG_NAME, "option")
-            ]
-            major_opts = [(v, t) for v, t in all_opts if v and v.endswith("_B")]
-            print(f"  majors: {len(major_opts)}")
-
-            fm_courses = []
-            for std_year in year_strs:
-                print(f"\n--- year {std_year} ---")
-                for mv, ml in major_opts:
-                    courses = scrape_major_year(driver, wait, mv, ml, std_year)
-                    fm_courses.extend(courses)
-                    time.sleep(1)
-
-            if mode == "fm":
-                all_courses = fm_courses
-            else:
-                # mode="both": merge FM into main (FM has better instructor/time data per-section)
-                fm_lookup = {f"{c['code']}_{c['sec']}": c for c in fm_courses}
-                for c in all_courses:
-                    key = f"{c['code']}_{c['sec']}"
-                    if key in fm_lookup:
-                        fm = fm_lookup[key]
-                        # Fill missing fields from FM data
-                        if not c["start"] and fm["start"]:
-                            c["start"] = fm["start"]
-                            c["end"]   = fm["end"]
-                        if not c["instructor"] or c["instructor"] == "-":
-                            c["instructor"] = fm["instructor"]
-                        if not c["year"]:
-                            c["year"] = fm["year"]
-                        if not c["major_value"]:
-                            c["major_value"] = fm["major_value"]
-                        if not c["major_label"]:
-                            c["major_label"] = fm["major_label"]
-                all_courses.extend([c for k, c in fm_lookup.items()
-                                     if not any(f"{x['code']}_{x['sec']}" == k for x in all_courses)])
-
-        # ── Save output ──────────────────────────────────────────────────────
-        os.makedirs("public", exist_ok=True)
-
-        # Build majors list from unique branch/major_label values
-        majors = []
-        seen_labels = set()
-        for c in all_courses:
-            lbl = c.get("major_label", "")
-            val = c.get("major_value", "")
-            if lbl and lbl not in seen_labels:
-                majors.append({"value": val or lbl, "label": lbl})
-                seen_labels.add(lbl)
-
-        output = {
-            "courses":    all_courses,
-            "majors":     majors,
-            "semesters":  semesters,
-            "total":      len(all_courses),
-            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "mode":       mode,
-        }
-        # ── Write to staging first ───────────────────────────────────────────
-        os.makedirs("data", exist_ok=True)
-        with open(OUTPUT_STAGING, "w", encoding="utf-8") as f:
-            json.dump(output, f, ensure_ascii=False, indent=2)
-
-        valid   = [c for c in all_courses if c["start"]]
-        has_lab = [c for c in all_courses if c.get("lab_start")]
-        has_cr  = [c for c in all_courses if c.get("credit", 0) != 3]
-        print(f"\nSTAGING saved → {OUTPUT_STAGING}")
-        print(f"  total={len(all_courses)}  has_time={len(valid)}  has_lab={len(has_lab)}  non-default-credit={len(has_cr)}")
-        for c in all_courses[:3]:
-            print(" ", json.dumps(c, ensure_ascii=False))
-
-        # ── Sanity check before publishing ──────────────────────────────────
-        issues = []
-        if len(all_courses) == 0:
-            issues.append("no courses scraped")
-        if len(valid) < len(all_courses) * 0.5:
-            issues.append(f"too many courses missing time ({len(valid)}/{len(all_courses)})")
-        if len(output.get("semesters", [])) == 0:
-            issues.append("no semesters found")
-
-        if issues:
-            print(f"\n[WARN] Staging NOT published — failed checks: {', '.join(issues)}")
-            print(f"       Review {OUTPUT_STAGING} manually, then run --publish to deploy.")
-        else:
-            publish_staging()
-
-    except Exception:
-        traceback.print_exc()
-        driver.save_screenshot("debug_error.png")
-    finally:
-        driver.quit()
-        print("[DONE]")
-
-
-# ── Entry point ───────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="KU Timetable Scraper")
-    parser.add_argument(
-        "--mode", choices=["main", "fm", "both"], default="main",
-        help="main=index.php (all courses), fm=FM page (per-major), both=merge"
-    )
-    parser.add_argument("--test",    action="store_true", help="run self-test only, no browser")
-    parser.add_argument("--publish", action="store_true", help="publish staging → live without re-scraping")
-    args = parser.parse_args()
-
-    try:
-        import bs4
-    except ImportError:
-        print("pip install beautifulsoup4 selenium webdriver-manager")
-        exit(1)
-
-    # ── Self-test ────────────────────────────────────────────────────────────
-    print("=== self-test ===")
-    all_pass = True
-
-    time_tests = [
-        ("9.3-12.3",    ("09:30", "12:30")),
-        ("09:30-12:30", ("09:30", "12:30")),
-        ("800-1200",    ("08:00", "12:00")),
-        ("1330-1630",   ("13:30", "16:30")),
-        ("8-11",        ("08:00", "11:00")),
-    ]
-    for inp, exp in time_tests:
-        got = parse_time_range(inp)
-        ok = got == exp
-        if not ok: all_pass = False
-        print(f"  {'OK' if ok else 'FAIL'} time({inp!r}) -> {got}")
-
-    credit_tests = [("3 (3-0)", 3), ("1 (0-3-0)", 1), ("3(2-2-5)", 3), ("2", 2)]
-    for inp, exp in credit_tests:
-        got = extract_credit(inp)
-        ok = got == exp
-        if not ok: all_pass = False
-        print(f"  {'OK' if ok else 'FAIL'} credit({inp!r}) -> {got}")
-
-    seat_tests = [
-        ("30/25",    (30, 25)),
-        ("30(25)",   (30, 25)),
-        ("30  25",   (30, 25)),
-        ("40",       (40, -1)),
-        ("รับ30 นั่ง25", (30, 25)),
-    ]
-    for inp, exp in seat_tests:
-        got = parse_seats(inp)
-        ok = got == exp
-        if not ok: all_pass = False
-        print(f"  {'OK' if ok else 'FAIL'} seats({inp!r}) -> {got}")
-
-    # Rowspan test (main-page structure)
-    # ── Main page parser test (real 15-col structure) ───────────────────────
-    # Header row 1: ที่(rs2)|รหัสวิชา(rs2)|ชื่อวิชา(rs2)|หน่วยกิต(rs2)|บรรยาย(cs3)|สาขา(rs2)|จำนวน(rs2)|ปฏิบัติ(cs3)|สาขา(rs2)|จำนวน(rs2)|อาจารย์(rs2)
-    # Header row 2: หมู่|วัน-เวลา|ห้อง | | | หมู่|วัน-เวลา|ห้อง
-    # Data row 1a: course 01355101 sec1, branch EE-1
-    # Data row 1b: course 01355101 sec1, branch EE-2 (rowspan sub-row)
-    # Data row 2:  course 01355102 sec1, branch EE-1
-    test_html_main = (
-        "<table>"
-        "<tr>"
-        "<th rowspan='2'>ที่</th>"
-        "<th rowspan='2'>รหัสวิชา</th>"
-        "<th rowspan='2'>ชื่อวิชา</th>"
-        "<th rowspan='2'>หน่วยกิต</th>"
-        "<th colspan='3'>บรรยาย</th>"
-        "<th rowspan='2'>สาขา-ชั้นปี</th>"
-        "<th rowspan='2'>จำนวน(คน)</th>"
-        "<th colspan='3'>ปฏิบัติ</th>"
-        "<th rowspan='2'>สาขา-ชั้นปี</th>"
-        "<th rowspan='2'>จำนวน(คน)</th>"
-        "<th rowspan='2'>อาจารย์</th>"
-        "</tr>"
-        "<tr>"
-        "<th>หมู่</th><th>วัน-เวลา</th><th>ห้อง</th>"
-        "<th>หมู่</th><th>วัน-เวลา</th><th>ห้อง</th>"
-        "</tr>"
-        # course 01355101-67, sec 1, branch EE-1
-        "<tr>"
-        "<td rowspan='2'>1</td>"
-        "<td rowspan='2'>01355101-67</td>"
-        "<td rowspan='2'>วิศวกรรมไฟฟ้า</td>"
-        "<td rowspan='2'>3(3-0-6)</td>"
-        "<td rowspan='2'>1</td>"
-        "<td rowspan='2'>จ.09.00-12.00</td>"
-        "<td rowspan='2'>A101</td>"
-        "<td>EE-1</td>"
-        "<td>30/20</td>"
-        "<td rowspan='2'>1</td>"
-        "<td rowspan='2'>พ.13.00-16.00</td>"
-        "<td rowspan='2'>L201</td>"
-        "<td></td><td></td>"
-        "<td rowspan='2'>อ.สมชาย</td>"
-        "</tr>"
-        # sub-row: branch EE-2
-        "<tr>"
-        "<td>EE-2</td><td>25/10</td>"
-        "<td></td><td></td>"
-        "</tr>"
-        # course 01355102-67, sec 1, branch EE-1
-        "<tr>"
-        "<td>2</td>"
-        "<td>01355102-67</td>"
-        "<td>วงจรไฟฟ้า</td>"
-        "<td>2(2-0-4)</td>"
-        "<td>1</td>"
-        "<td>จ.13.00-15.00</td>"
-        "<td>A102</td>"
-        "<td>EE-1</td>"
-        "<td>25/15</td>"
-        "<td></td><td></td><td></td>"
-        "<td></td><td></td>"
-        "<td>อ.สมหญิง</td>"
-        "</tr>"
-        "</table>"
-    )
-    r = parse_main_html(test_html_main, "2567/1")
-    main_checks = {
-        "codes":     sorted([c["code"] for c in r]) == ["01355101", "01355102"],
-        "sec":       any(c["sec"] == "1" for c in r),
-        "lab_time":  any(c.get("lab_start") == "13:00" for c in r),
-        "branches":  any(len(c.get("branches", [])) == 2 for c in r),
-    }
-    for name, chk in main_checks.items():
-        if not chk: all_pass = False
-        print(f"  {'OK' if chk else 'FAIL'} main_parse/{name}")
-    if r:
-        for c in r:
-            lec   = f"{c['day']} {c['start']}-{c['end']} {c['room']}"
-            lab   = f"{c['lab_day']} {c['lab_start']}-{c['lab_end']} {c['lab_room']}"
-            seats = str(c['seats_total']) + '/' + str(c['seats_enrolled'])
-            print(f"    {c['code']} s{c['sec']} lec={lec} lab={lab} seats={seats} br={c['branches']}")
-
-    print(f"\n{'ALL PASSED' if all_pass else 'SOME FAILED'}")
-    if not all_pass:
-        exit(1)
-
-    if args.test:
-        exit(0)   # --test: stop here, don't open browser
-
-    if args.publish:
-        ok = publish_staging()
-        exit(0 if ok else 1)
-
-    # ── Run scraper ──────────────────────────────────────────────────────────
-    run(mode=args.mode)
