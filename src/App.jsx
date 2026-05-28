@@ -58,15 +58,6 @@ function hasConflict(a, b) {
   if (a.day !== b.day || !a.start || !b.start) return false;
   return parseTime(a.start) < parseTime(b.end) && parseTime(b.start) < parseTime(a.end);
 }
-// ดึง time-slots ทั้งหมดของวิชา (บรรยาย + ปฏิบัติ)
-function getSlots(course) {
-  const slots = [];
-  if (course.day && course.start)
-    slots.push({ id: course.id, day: course.day, start: course.start, end: course.end });
-  if (course.labDay && course.labStart)
-    slots.push({ id: course.id, day: course.labDay, start: course.labStart, end: course.labEnd });
-  return slots;
-}
 function blockPos(course) {
   const s = parseTime(course.start), e = parseTime(course.end);
   if (!s || !e) return null;
@@ -99,19 +90,25 @@ function CreditBar({ current, max }) {
   );
 }
 // ── GridBlock ─────────────────────────────────────────────
-function GridBlock({ course, isConflicting, pal, pos, onRemove, isLab }) {
-  const displayRoom = isLab ? course.labRoom : course.room;
+function GridBlock({ course, isConflicting, pal, pos, onRemove, lane = 0, numLanes = 1, laneH = 88 }) {
+  const isLab = course.type === "lab";
+  const displayRoom = course.room;
   const borderStyle = isLab ? "dashed" : "solid";
   const bgColor     = isLab
     ? (isConflicting ? P.conflict : pal.bg + "cc")   // lab = slightly transparent
     : (isConflicting ? P.conflict : pal.bg);
+  const topVal    = numLanes > 1 ? lane * laneH + 4 : 4;
+  const bottomVal = numLanes > 1 ? undefined : 4;
+  const heightVal = numLanes > 1 ? laneH - 8 : undefined;
   return (
     <div
       data-grid-block="1"
       onClick={() => onRemove(course)}
       style={{
         position: "absolute",
-        top: 4, bottom: 4,
+        top: topVal,
+        bottom: bottomVal,
+        height: heightVal,
         left: `${pos.leftPct}%`,
         width: `${pos.widthPct}%`,
         borderRadius: 8,
@@ -144,7 +141,7 @@ function GridBlock({ course, isConflicting, pal, pos, onRemove, isLab }) {
           fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 4,
           background: isConflicting ? P.conflictBorder + "20" : pal.border + "25",
           color: isConflicting ? P.conflictBorder : pal.text,
-        }}>{isLab ? "🔬 Lab" : `หมู่ ${course.sec}`}</span>
+        }}>{isLab ? `🔬 Lab ${course.sec}` : `หมู่ ${course.sec}`}</span>
       </div>
       {/* บรรทัด 2: ชื่อวิชา */}
       <div data-grid-name="1" style={{
@@ -159,7 +156,7 @@ function GridBlock({ course, isConflicting, pal, pos, onRemove, isLab }) {
       {/* บรรทัด 3: อาจารย์ + ห้อง */}
       {(course.instructor && course.instructor !== "-" || displayRoom) && (
         <div style={{ fontSize: 10, color: P.textHint, display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap", overflow: "hidden", minWidth: 0 }}>
-          {!isLab && course.instructor && course.instructor !== "-" && (
+          {course.instructor && course.instructor !== "-" && (
             <>
               <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} style={{ flexShrink: 0 }}>
                 <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx={12} cy={7} r={4}/>
@@ -196,30 +193,33 @@ function Grid({ selectedCourses, onRemove, gridRef, conflictIds }) {
           ))}
         </div>
         {DAYS.map(day => {
-          // รวม blocks: บรรยาย (day) + ปฏิบัติ (labDay) ที่ตรงกับวันนี้
-          const lectBlocks = selectedCourses
+          // แต่ละ entry (lec หรือ lab) เป็น block แยกกัน — มี day/start/end ของตัวเอง
+          const allBlocks = selectedCourses
             .filter(c => c.day === day)
-            .map(c => ({ course: c, isLab: false, pos: blockPos(c) }))
+            .map(c => ({ course: c, pos: blockPos(c) }))
             .filter(b => b.pos);
-          const labBlocks = selectedCourses
-            .filter(c => c.labDay === day && c.labStart)
-            .map(c => ({ course: c, isLab: true, pos: blockPos({ start: c.labStart, end: c.labEnd }) }))
-            .filter(b => b.pos);
-          const allBlocks = [...lectBlocks, ...labBlocks];
+
+          // แบ่ง lane เพื่อป้องกัน blocks ทับกัน
+          const LANE_H = 88;
+          allBlocks.forEach((b, idx) => {
+            const s = { day, start: b.course.start, end: b.course.end };
+            let lane = 0;
+            while (true) {
+              const conflicts = allBlocks.slice(0, idx)
+                .filter(x => x.lane === lane)
+                .some(x => hasConflict(s, { day, start: x.course.start, end: x.course.end }));
+              if (!conflicts) { b.lane = lane; break; }
+              lane++;
+            }
+          });
+          const numLanes = allBlocks.length > 0 ? Math.max(...allBlocks.map(b => b.lane)) + 1 : 1;
 
           const isSun = day === "SUN";
           const isSat = day === "SAT";
           const isWeekend = isSun || isSat;
           const rowBg       = isSun ? P.sunBg : isSat ? P.satBg : P.rowBg;
           const borderColor = isSun ? "#f0b8dd" : isSat ? P.borderMid : P.border;
-          const hasOverlap = allBlocks.length > 1 && allBlocks.some((a, i) =>
-            allBlocks.slice(i + 1).some(b => {
-              const sa = { day, start: a.isLab ? a.course.labStart : a.course.start, end: a.isLab ? a.course.labEnd : a.course.end };
-              const sb = { day, start: b.isLab ? b.course.labStart : b.course.start, end: b.isLab ? b.course.labEnd : b.course.end };
-              return hasConflict(sa, sb);
-            })
-          );
-          const rowMinHeight = hasOverlap ? 150 : allBlocks.length > 0 ? 96 : 36;
+          const rowMinHeight = numLanes > 1 ? numLanes * LANE_H + 8 : allBlocks.length > 0 ? 96 : 36;
           return (
             <div key={day} data-grid-row="1" style={{
               display: "flex",
@@ -253,18 +253,20 @@ function Grid({ selectedCourses, onRemove, gridRef, conflictIds }) {
                     borderLeft: `1px solid ${P.gridLine}`,
                   }} />
                 ))}
-                {allBlocks.map(({ course: c, isLab, pos }) => {
+                {allBlocks.map(({ course: c, pos, lane }) => {
                   const isConflicting = conflictIds.has(c.id);
                   const pal = PALETTE[c.colorIndex];
                   return (
                     <GridBlock
-                      key={`${c.id}_${isLab ? "lab" : "lect"}`}
+                      key={c.id}
                       course={c}
                       isConflicting={isConflicting}
                       pal={pal}
                       pos={pos}
                       onRemove={onRemove}
-                      isLab={isLab}
+                      lane={lane ?? 0}
+                      numLanes={numLanes}
+                      laneH={LANE_H}
                     />
                   );
                 })}
@@ -323,11 +325,12 @@ function SelectedPanel({ selectedCourses, onRemove, onClear, totalCredits, confl
           {selectedCourses.map(c => {
             const pal = PALETTE[c.colorIndex];
             const isConflicting = conflictIds.has(c.id);
+            const isLab = c.type === "lab";
             return (
               <div key={c.id} style={{
                 borderRadius: 10, padding: "8px 10px",
                 background: isConflicting ? P.conflict : pal.bg,
-                border: `1px solid ${isConflicting ? P.conflictBorder + "60" : pal.border + "40"}`,
+                border: `1px ${isLab ? "dashed" : "solid"} ${isConflicting ? P.conflictBorder + "60" : pal.border + "40"}`,
                 display: "flex", alignItems: "flex-start", gap: 8,
               }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -340,7 +343,7 @@ function SelectedPanel({ selectedCourses, onRemove, onClear, totalCredits, confl
                       fontSize: 10, fontWeight: 600, padding: "1px 5px", borderRadius: 3,
                       background: isConflicting ? P.conflictBorder + "20" : pal.border + "25",
                       color: isConflicting ? P.conflictBorder : pal.text,
-                    }}>หมู่ {c.sec}</span>
+                    }}>{isLab ? `🔬 Lab ${c.sec}` : `หมู่ ${c.sec}`}</span>
                   </div>
                   <div style={{
                     fontSize: 12, fontWeight: 600, color: P.textPrimary,
@@ -348,16 +351,10 @@ function SelectedPanel({ selectedCourses, onRemove, onClear, totalCredits, confl
                   }}>{c.name}</div>
                   <div style={{ fontSize: 10, color: P.textSecondary, display: "flex", gap: 5, flexWrap: "wrap" }}>
                     <span>{DAY_LABELS[c.day] ?? c.day} {c.start}–{c.end}</span>
-                    {c.instructor !== "-" && <span>· {c.instructor}</span>}
+                    {c.instructor && c.instructor !== "-" && <span>· {c.instructor}</span>}
                     {c.room && <span>· 🏫 {c.room}</span>}
-                    <span>· {c.credit} หน่วย</span>
+                    {c.credit > 0 && <span>· {c.credit} หน่วย</span>}
                   </div>
-                  {c.labStart && (
-                    <div style={{ fontSize: 10, color: P.textHint, marginTop: 1 }}>
-                      🔬 {DAY_LABELS[c.labDay] ?? c.labDay} {c.labStart}–{c.labEnd}
-                      {c.labRoom ? ` · 🏫 ${c.labRoom}` : ""}
-                    </div>
-                  )}
                 </div>
                 <button onClick={() => onRemove(c)} style={{
                   background: "none", border: "none", cursor: "pointer",
@@ -375,18 +372,19 @@ function SelectedPanel({ selectedCourses, onRemove, onClear, totalCredits, confl
   );
 }
 // ── CourseCard ────────────────────────────────────────────
-function CourseCard({ course, isSelected, isConflict, isDuplicateCode, onToggle }) {
+function CourseCard({ course, isSelected, isConflict, isDuplicateSection, onToggle, filterYear }) {
   const pal = PALETTE[course.colorIndex];
-  const isDisabled = !isSelected && isDuplicateCode;
+  const isDisabled = !isSelected && isDuplicateSection;
+  const isLab = course.type === "lab";
   return (
     <div
       onClick={() => !isDisabled && onToggle(course)}
       style={{
         border: isSelected
-          ? `1.5px solid ${pal.border}`
+          ? `1.5px ${isLab ? "dashed" : "solid"} ${pal.border}`
           : isConflict
-            ? `1px solid ${P.conflictBorder}80`
-            : `1px solid ${P.border}`,
+            ? `1px ${isLab ? "dashed" : "solid"} ${P.conflictBorder}80`
+            : `1px ${isLab ? "dashed" : "solid"} ${P.border}`,
         borderRadius: 12, padding: "10px 12px",
         background: isSelected ? pal.bg : isConflict ? "#fff5f6" : P.cardBg,
         cursor: isDisabled ? "not-allowed" : "pointer",
@@ -407,25 +405,38 @@ function CourseCard({ course, isSelected, isConflict, isDuplicateCode, onToggle 
               fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 4,
               background: isSelected ? pal.border : P.accentLt,
               color: isSelected ? "#fff" : P.accent,
-            }}>หมู่ {course.sec}</span>
-            {course.year && (
-              <span style={{ fontSize: 10, padding: "2px 5px", borderRadius: 4, background: P.border, color: P.textSecondary }}>
-                ปี {course.year}
-              </span>
+            }}>{isLab ? `🔬 Lab ${course.sec}` : `หมู่ ${course.sec}`}</span>
+            {(() => {
+              // ถ้า user filter ปี → โชว์แค่ปีนั้น (ตรงกับ KU FM page)
+              // ถ้าไม่ filter → โชว์ปีทั้งหมดที่ section นี้รองรับ
+              const ys = filterYear && course.branchYears?.includes(filterYear)
+                ? [filterYear]
+                : (course.branchYears && course.branchYears.length > 0 ? course.branchYears : (course.year ? [course.year] : []));
+              return ys.length > 0 && (
+                <span style={{ fontSize: 10, padding: "2px 5px", borderRadius: 4, background: P.border, color: P.textSecondary }}>
+                  ปี {ys.join("/")}
+                </span>
+              );
+            })()}
+            {course.facultyYearTags && course.facultyYearTags.some(t => t.endsWith("-00")) && (
+              <span style={{
+                fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 4,
+                background: "#fff3e0", color: "#e65100", border: "1px solid #ffb74d",
+              }}>📖 วิชาทั่วไป</span>
             )}
-            {isConflict && !isDuplicateCode && (
+            {isConflict && !isDuplicateSection && (
               <span style={{
                 fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 4,
                 background: P.conflictBorder + "1a", color: P.conflictBorder,
                 display: "flex", alignItems: "center", gap: 3,
               }}>⚠ ชนเวลา</span>
             )}
-            {isDuplicateCode && !isSelected && (
+            {isDuplicateSection && !isSelected && (
               <span style={{
                 fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 4,
                 background: "#e0e0e0", color: "#757575",
                 display: "flex", alignItems: "center", gap: 3,
-              }}>เลือกหมู่อื่นแล้ว</span>
+              }}>เลือก{isLab ? "lab" : "หมู่"}อื่นแล้ว</span>
             )}
           </div>
           <div style={{
@@ -438,7 +449,7 @@ function CourseCard({ course, isSelected, isConflict, isDuplicateCode, onToggle 
                 <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2}>
                   <circle cx={12} cy={12} r={10} /><polyline points="12 6 12 12 16 14" />
                 </svg>
-                {DAY_SHORT[course.day] ?? course.day} · {course.start}–{course.end}
+                {isLab && "🔬 "}{DAY_SHORT[course.day] ?? course.day} · {course.start}–{course.end}
                 {course.room ? ` · 🏫 ${course.room}` : ""}
               </span>
             )}
@@ -451,15 +462,6 @@ function CourseCard({ course, isSelected, isConflict, isDuplicateCode, onToggle 
               </span>
             )}
           </div>
-          {/* ปฏิบัติ */}
-          {course.labStart && (
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 2 }}>
-              <span style={{ fontSize: 11, color: P.textSecondary, display: "flex", alignItems: "center", gap: 3 }}>
-                🔬 {DAY_SHORT[course.labDay] ?? course.labDay} · {course.labStart}–{course.labEnd}
-                {course.labRoom ? ` · 🏫 ${course.labRoom}` : ""}
-              </span>
-            </div>
-          )}
           {course.majorLabel && (
             <div style={{ fontSize: 10, color: P.textHint, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {course.majorLabel}
@@ -467,7 +469,9 @@ function CourseCard({ course, isSelected, isConflict, isDuplicateCode, onToggle 
           )}
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5, flexShrink: 0 }}>
-          <span style={{ fontSize: 11, color: P.textHint }}>{course.credit} หน่วย</span>
+          {course.credit > 0 && (
+            <span style={{ fontSize: 11, color: P.textHint }}>{course.credit} หน่วย</span>
+          )}
           <div style={{
             width: 16, height: 16, borderRadius: "50%", border: `2px solid ${pal.border}`,
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -527,7 +531,7 @@ function parseDayTime(dt) {
   if (tm) return { day, start: normalizeTime(tm[1]), end: normalizeTime(tm[2]) };
   return { day, start: "", end: "" };
 }
-function normalizeCourse(entry, index) {
+function normalizeCourseEntries(entry, index) {
   const code = String(entry.code ?? entry.subject_code ?? "").replace(/-\d{2,4}$/, "").trim();
   const name = String(entry.name ?? entry.subject_name ?? "(ไม่มีชื่อ)");
   const sec = String(entry.sec ?? entry.section ?? "1");
@@ -536,8 +540,11 @@ function normalizeCourse(entry, index) {
   // ── extract year / major จาก branches array (scraped data) ─────────
   const rawBranches = Array.isArray(entry.branches) ? entry.branches : [];
   let year = String(entry.year ?? "");
-  let majorValue = String(entry.major_value ?? "");
+  let majorValue = String(entry.major_value ?? "").replace(/_(B|M|D)$/i, "");
   let majorLabel = String(entry.major_label ?? "");
+  const majorValues = Array.isArray(entry.major_values)
+    ? entry.major_values.map(v => String(v).replace(/_(B|M|D)$/i, ""))
+    : [];
   if (!year) {
     for (const br of rawBranches) {
       const m = String(br).match(/-(\d{2})$/);
@@ -546,26 +553,78 @@ function normalizeCourse(entry, index) {
   }
   if (!majorValue) {
     for (const br of rawBranches) {
-      const m = String(br).match(/^([A-Z]\d+)-/i);
-      if (m) { majorValue = m[1].toUpperCase(); break; }
+      const s = String(br).trim();
+      // รหัสสาขา เช่น "B5602-2"
+      const m1 = s.match(/^([A-Z]\d+)-/i);
+      if (m1) { majorValue = m1[1].toUpperCase(); break; }
+      // ชื่อภาษาไทย เช่น "วิศวกรรมไฟฟ้า-2"
+      const m2 = s.match(/^(.+)-\d+$/);
+      if (m2) { majorValue = m2[1].trim(); break; }
     }
   }
   if (!majorLabel) majorLabel = majorValue;
+  // ── เก็บข้อมูลจาก branches ทั้งหมด ──
+  //  majorCodes: รหัสสาขาทุกอันที่เปิดให้ลง (เช่น ["B5602","B6101"])
+  //  branchTuples: pair "MAJOR-YEAR" เช่น ["B5602-68","B6101-67"]
+  //  facultyYearTags: generic faculty-year เช่น ["A-0","B-69"] (year=0 = ทุกปี)
+  const majorCodesSet     = new Set();
+  const branchTuplesSet   = new Set();
+  const facultyYearTagsSet = new Set();
+  const branchYearsSet    = new Set();
+  if (majorValue) majorCodesSet.add(majorValue);
+  majorValues.forEach(v => v && majorCodesSet.add(v));
+  for (const br of rawBranches) {
+    // bot รวมหลายค่าใน entry เดียวด้วย ", " เช่น "C5201-66, C5201-67"
+    for (const part of String(br).split(/[,\s]+/)) {
+      const p = part.trim();
+      if (!p) continue;
+      // "B5602-68" หรือ "B5602-2568"
+      const m = p.match(/^([A-Z]\d+)-(\d{1,4})$/i);
+      if (m) {
+        const code = m[1].toUpperCase();
+        const raw  = m[2];
+        const yr   = raw.length > 2 ? raw.slice(-2) : raw.padStart(2, "0");
+        majorCodesSet.add(code);
+        branchTuplesSet.add(`${code}-${yr}`);
+        branchYearsSet.add(yr);
+        continue;
+      }
+      // เฉพาะรหัสสาขาอย่างเดียว (ไม่มี -year)
+      const cm = p.match(/^([A-Z]\d+)$/i);
+      if (cm) { majorCodesSet.add(cm[1].toUpperCase()); continue; }
+      // generic faculty tag เช่น "A-0", "B-69" หรือ multi-faculty "ABCD-0" (ทุกคณะ A,B,C,D)
+      const fm = p.match(/^([A-Z]+)-(\d{1,2})$/i);
+      if (fm) {
+        const letters = fm[1].toUpperCase();
+        const yr  = fm[2].padStart(2, "0");
+        for (const fac of letters) {
+          facultyYearTagsSet.add(`${fac}-${yr}`);
+        }
+        if (yr !== "00") branchYearsSet.add(yr);
+      }
+    }
+  }
+  const majorCodes      = Array.from(majorCodesSet);
+  const branchTuples    = Array.from(branchTuplesSet);
+  const facultyYearTags = Array.from(facultyYearTagsSet);
+  const branchYears     = Array.from(branchYearsSet);
+  // facultyTags backward-compat (single letters) — เผื่อใครยังใช้
+  const facultyTags = Array.from(new Set(facultyYearTags.map(t => t[0])));
   // ────────────────────────────────────────────────────────────────────
   const branch = String(entry.branch ?? rawBranches.join(", "));
-  const room = String(entry.room ?? "");
   // ── บรรยาย (lecture) ────────────────────────────────────
-  let day   = String(entry.day   ?? "");
-  let start = String(entry.start ?? "");
-  let end   = String(entry.end   ?? "");
-  if ((!day || !start || !end) && entry.day_time) {
+  let lecDay   = String(entry.day   ?? "");
+  let lecStart = String(entry.start ?? "");
+  let lecEnd   = String(entry.end   ?? "");
+  const lecRoom = String(entry.room ?? "");
+  if ((!lecDay || !lecStart || !lecEnd) && entry.day_time) {
     const parsed = parseDayTime(entry.day_time);
-    if (!day)   day   = parsed.day;
-    if (!start) start = parsed.start;
-    if (!end)   end   = parsed.end;
+    if (!lecDay)   lecDay   = parsed.day;
+    if (!lecStart) lecStart = parsed.start;
+    if (!lecEnd)   lecEnd   = parsed.end;
   }
-  start = normalizeTime(start) || start;
-  end   = normalizeTime(end)   || end;
+  lecStart = normalizeTime(lecStart) || lecStart;
+  lecEnd   = normalizeTime(lecEnd)   || lecEnd;
   // ── ปฏิบัติ (lab) ───────────────────────────────────────
   const labDay   = String(entry.lab_day   ?? "");
   const labStart = normalizeTime(String(entry.lab_start ?? "")) || "";
@@ -574,22 +633,74 @@ function normalizeCourse(entry, index) {
   // ── จำนวนที่นั่ง ─────────────────────────────────────────
   const seatsTotal    = Number(entry.seats_total    ?? -1);
   const seatsEnrolled = Number(entry.seats_enrolled ?? -1);
-  const valid = !!(code && day && start && end);
-  return {
-    _raw: entry,
-    id: `${code}_${sec}_${day}_${index}`,
-    code, name, sec, day, start, end, credit,
-    instructor, year, majorValue, majorLabel, room, branch,
-    labDay, labStart, labEnd, labRoom,
-    seatsTotal, seatsEnrolled,
-    colorIndex: index % PALETTE.length,
-    valid,
+  const colorIndex = index % PALETTE.length;
+  // semester — รองรับทั้ง main mode ("2569/ต้น") และ FM mode ("FM/major/year/2569/1")
+  let semester = String(entry.semester ?? "");
+  const fmMatch = semester.match(/\/(\d{4})\/(\d)$/);
+  if (fmMatch) {
+    const semMap = { "1": "ต้น", "2": "ปลาย", "0": "ฤดูร้อน" };
+    semester = `${fmMatch[1]}/${semMap[fmMatch[2]] ?? fmMatch[2]}`;
+  }
+  const common = {
+    code, name, sec, credit,
+    instructor, year, majorValue, majorValues, majorLabel, branch,
+    majorCodes, facultyTags, branchTuples, facultyYearTags, branchYears,
+    seatsTotal, seatsEnrolled, semester,
+    colorIndex,
   };
+  const entries = [];
+  const hasLec = !!(code && lecDay && lecStart && lecEnd);
+  const hasLab = !!(code && labDay && labStart && labEnd);
+  if (hasLec) {
+    entries.push({
+      ...common,
+      _raw: entry,
+      id: `${code}_${sec}_lec_${index}`,
+      type: "lec",
+      day: lecDay, start: lecStart, end: lecEnd, room: lecRoom,
+      // เก็บ credit ไว้ที่ lec (lab จะเป็น 0 ถ้ามี lec คู่กัน เพื่อไม่ double count)
+      credit,
+    });
+  }
+  if (hasLab) {
+    entries.push({
+      ...common,
+      _raw: entry,
+      id: `${code}_${sec}_lab_${index}`,
+      type: "lab",
+      day: labDay, start: labStart, end: labEnd, room: labRoom,
+      // ถ้ามี lec คู่อยู่แล้ว lab credit = 0 (ป้องกัน double count)
+      // ถ้าเป็น lab-only ใช้ credit เต็ม
+      credit: hasLec ? 0 : credit,
+    });
+  }
+  return entries;
 }
 function parseDataSource(raw) {
   const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.courses) ? raw.courses : [];
   if (arr.length === 0) throw new Error("ไม่พบข้อมูลรายวิชา");
-  const majors = Array.isArray(raw?.majors) ? raw.majors : (() => {
+  // ── Cross-section branch inheritance ──
+  // วิชา lab-only sections (เช่น 04252214 หมู่ 101-105) บ่อยครั้งมี branches ว่าง
+  // เพราะ KU เก็บ branches แค่ที่ row ของ lecture section แต่ส่วน lab อยู่ row แยก
+  // → union branches ของทุก section ใน code เดียวกัน แล้วเติมให้ section ที่ว่าง
+  const codeBranches = new Map();  // code → Set<branch>
+  for (const c of arr) {
+    const code = String(c.code ?? c.subject_code ?? "").replace(/-\d{2,4}$/, "").trim();
+    if (!code) continue;
+    const brs = Array.isArray(c.branches) ? c.branches : [];
+    if (brs.length === 0) continue;
+    if (!codeBranches.has(code)) codeBranches.set(code, new Set());
+    const set = codeBranches.get(code);
+    for (const br of brs) if (br) set.add(br);
+  }
+  for (const c of arr) {
+    const code = String(c.code ?? c.subject_code ?? "").replace(/-\d{2,4}$/, "").trim();
+    const brs = Array.isArray(c.branches) ? c.branches : [];
+    if (brs.length === 0 && codeBranches.has(code)) {
+      c.branches = Array.from(codeBranches.get(code));
+    }
+  }
+  const majors = (Array.isArray(raw?.majors) && raw.majors.length > 0) ? raw.majors : (() => {
     const m = new Map();
     arr.forEach(e => {
       let v = String(e.major_value ?? "");
@@ -598,13 +709,18 @@ function parseDataSource(raw) {
       if (!v) {
         const brs = Array.isArray(e.branches) ? e.branches : [];
         for (const br of brs) {
-          const match = String(br).match(/^([A-Z]\d+)-/i);
-          if (match) { v = match[1].toUpperCase(); l = v; break; }
+          const s = String(br).trim();
+          if (!s) continue;
+          // รองรับทั้ง "วิศวกรรมไฟฟ้า-2" และ "EE2-xxx"
+          const thaiMatch = s.match(/^(.+)-\d+$/);
+          const engMatch  = s.match(/^([A-Z]\d+)-/i);
+          if (thaiMatch) { v = thaiMatch[1].trim(); l = v; break; }
+          if (engMatch)  { v = engMatch[1].toUpperCase(); l = v; break; }
         }
       }
       if (v && !m.has(v)) m.set(v, { value: v, label: l });
     });
-    return Array.from(m.values()).sort((a, b) => a.value.localeCompare(b.value));
+    return Array.from(m.values()).sort((a, b) => a.label.localeCompare(b.label, "th"));
   })();
   return {
     courses: arr,
@@ -642,7 +758,8 @@ export default function App() {
   }, [selected]);
   useEffect(() => {
     setIsLoading(true);
-    fetch("/all_timetables.json")
+    // ใช้ BASE_URL เพื่อรองรับ GitHub Pages ที่ deploy ภายใต้ subpath
+    fetch(`${import.meta.env.BASE_URL}all_timetables.json`)
       .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
       .then(raw => { setDataSource(parseDataSource(raw)); setJsonLoaded(true); })
       .catch(() => { /* fallback to SAMPLE_DATA */ })
@@ -662,27 +779,46 @@ export default function App() {
     } catch (e) { setUpdateError(e.message); }
   }
   const allCourses = useMemo(
-    () => dataSource.courses.map((e, i) => normalizeCourse(e, i)).filter(c => c.valid),
+    () => dataSource.courses.flatMap((e, i) => normalizeCourseEntries(e, i)),
     [dataSource]
+  );
+  // ── Auto-detect & filter to latest semester only ──
+  // "ตารางแสดงแค่ปีที่ศึกษาอยู่" → กรองให้เหลือเฉพาะ semester ล่าสุดแบบ implicit
+  const latestSemester = useMemo(() => {
+    const set = new Set(allCourses.map(c => c.semester).filter(Boolean));
+    if (set.size === 0) return "";
+    const order = { "ต้น": 0, "ฤดูร้อน": 1, "ปลาย": 2 };
+    return Array.from(set).sort((a, b) => {
+      const [ya, sa] = a.split("/");
+      const [yb, sb] = b.split("/");
+      if (ya !== yb) return yb.localeCompare(ya);
+      return (order[sa] ?? 9) - (order[sb] ?? 9);
+    })[0];
+  }, [allCourses]);
+  const currentCourses = useMemo(
+    () => latestSemester
+      ? allCourses.filter(c => c.semester === latestSemester)
+      : allCourses,
+    [allCourses, latestSemester]
   );
   const majors = dataSource.majors ?? [];
   const years = useMemo(() => {
-    const s = new Set(allCourses.map(c => c.year).filter(Boolean));
+    const s = new Set(currentCourses.map(c => c.year).filter(Boolean));
     return Array.from(s).sort((a, b) => b.localeCompare(a));
-  }, [allCourses]);
+  }, [currentCourses]);
   const selectedCourses = useMemo(
     () => allCourses.filter(c => selected.includes(c.id)),
     [allCourses, selected]
   );
+  // credit ต่อ entry ถูก set ให้ไม่ double-count แล้ว (lab=0 ถ้ามี lec คู่ในวิชาเดียวกัน)
   const totalCredits = selectedCourses.reduce((s, c) => s + c.credit, 0);
   const conflictIds = useMemo(() => {
     const ids = new Set();
-    // รวม slot ทั้งหมด (บรรยาย + ปฏิบัติ) แล้วเช็คทุกคู่
-    const allSlots = selectedCourses.flatMap(getSlots);
-    for (let i = 0; i < allSlots.length; i++) {
-      for (let j = i + 1; j < allSlots.length; j++) {
-        const a = allSlots[i], b = allSlots[j];
-        if (a.id !== b.id && hasConflict(a, b)) {
+    // แต่ละ entry เป็น slot เดี่ยว ๆ — เช็คชนเวลาตรง ๆ ได้เลย
+    for (let i = 0; i < selectedCourses.length; i++) {
+      for (let j = i + 1; j < selectedCourses.length; j++) {
+        const a = selectedCourses[i], b = selectedCourses[j];
+        if (hasConflict(a, b)) {
           ids.add(a.id);
           ids.add(b.id);
         }
@@ -690,14 +826,44 @@ export default function App() {
     }
     return ids;
   }, [selectedCourses]);
-  const selectedCodes = useMemo(
-    () => new Set(selectedCourses.map(c => c.code)),
-    [selectedCourses]
-  );
+  // map: "code|type" → entry — เพื่อ block ซ้ำเฉพาะ lec+lec หรือ lab+lab (ยอมให้ lec+lab ของวิชาเดียวกัน)
+  const selectedByCodeType = useMemo(() => {
+    const m = new Map();
+    selectedCourses.forEach(c => m.set(`${c.code}|${c.type}`, c));
+    return m;
+  }, [selectedCourses]);
   const filtered = useMemo(() => {
-    let list = allCourses;
-    if (filterMajor) list = list.filter(c => c.majorValue === filterMajor);
-    if (filterYear)  list = list.filter(c => c.year === filterYear);
+    let list = currentCourses;   // ใช้เฉพาะ semester ล่าสุด
+    // เมื่อมีทั้ง major + year → ต้องการ tuple "major-year" ที่แม่นยำ
+    // เพื่อให้วิชาที่ branches มีหลาย (major-year) เช่น "B6101-67, B5602-68"
+    // แสดงเฉพาะถ้านศ. major+year นั้นจริง ๆ ลงได้
+    // courses ที่ไม่มี branch info เลย (lab-only เช่น Sports, Computer Apps) → ถือเป็นวิชาเปิดเสรี
+    const noBranchInfo = c =>
+      c.branchTuples.length === 0 &&
+      c.facultyYearTags.length === 0 &&
+      c.majorCodes.length === 0;
+    if (filterMajor && filterYear) {
+      const fac = filterMajor[0];
+      const tuple    = `${filterMajor}-${filterYear}`;
+      const facTuple = `${fac}-${filterYear}`;
+      const facWild  = `${fac}-00`;
+      // strict per-section match — section นี้ต้องระบุสาขา+ปีของ user เอง
+      list = list.filter(c =>
+        c.branchTuples.includes(tuple) ||
+        c.facultyYearTags.includes(facTuple) ||
+        c.facultyYearTags.includes(facWild)
+      );
+    } else if (filterMajor) {
+      const fac = filterMajor[0];
+      list = list.filter(c =>
+        c.majorCodes.includes(filterMajor) ||
+        (fac && c.facultyTags.includes(fac))
+      );
+    } else if (filterYear) {
+      list = list.filter(c =>
+        c.branchYears.includes(filterYear) || c.year === filterYear
+      );
+    }
     if (filterDay)   list = list.filter(c => c.day === filterDay);
     if (query) {
       const q = query.toLowerCase();
@@ -709,31 +875,41 @@ export default function App() {
         c.room.toLowerCase().includes(q)
       );
     }
+    // เรียงตามวัน (จ→ส→อา) แล้วเวลาเริ่ม → code → sec
+    const dayOrder = { MON: 1, TUE: 2, WED: 3, THU: 4, FRI: 5, SAT: 6, SUN: 7 };
+    list = [...list].sort((a, b) => {
+      const da = dayOrder[a.day] ?? 99;
+      const db = dayOrder[b.day] ?? 99;
+      if (da !== db) return da - db;
+      if (a.start !== b.start) return (a.start || "").localeCompare(b.start || "");
+      if (a.code !== b.code)   return a.code.localeCompare(b.code);
+      return String(a.sec).localeCompare(String(b.sec));
+    });
     return list;
-  }, [allCourses, filterMajor, filterYear, filterDay, query]);
+  }, [currentCourses, filterMajor, filterYear, filterDay, query]);
   function toggle(course) {
     if (selected.includes(course.id)) {
       setSelected(p => p.filter(id => id !== course.id));
       setWarning("");
       return;
     }
-    const duplicateCode = selectedCourses.find(c => c.code === course.code);
-    if (duplicateCode) {
-      setWarning(`⚠️ เลือกวิชา ${course.code} หมู่ ${duplicateCode.sec} ไปแล้ว (เลือกได้ 1 หมู่เรียน/รายวิชา)`);
+    // block ถ้ามี code+type เดียวกันถูกเลือกอยู่แล้ว (ยอม lec+lab ของวิชาเดียวกัน)
+    const dup = selectedByCodeType.get(`${course.code}|${course.type}`);
+    if (dup) {
+      const typeLabel = course.type === "lab" ? "Lab" : "Lec";
+      setWarning(`⚠️ เลือก ${course.code} ${typeLabel} หมู่ ${dup.sec} ไปแล้ว (เลือกได้ 1 หมู่/รายวิชา/ประเภท)`);
       return;
     }
     if (totalCredits + course.credit > MAX_CREDITS) {
       setWarning(`หน่วยกิตเกิน ${MAX_CREDITS} (จะเป็น ${totalCredits + course.credit} หน่วย)`);
       return;
     }
-    // เช็คชนเวลาระหว่างทุก slot (บรรยาย+ปฏิบัติ) ของวิชาใหม่กับวิชาที่เลือกไว้แล้ว
-    const newSlots  = getSlots({ ...course, id: course.id });
-    const conflict = selectedCourses.find(c =>
-      getSlots(c).some(es => newSlots.some(ns => hasConflict(ns, es)))
-    );
+    // เช็คชนเวลา — ถ้าชน block เลย (ไม่ให้เพิ่ม)
+    const conflict = selectedCourses.find(c => hasConflict(c, course));
     if (conflict) {
-      setSelected(p => [...p, course.id]);
-      setWarning(`⚠ ${course.code} หมู่ ${course.sec} เวลาชนกับ ${conflict.code} หมู่ ${conflict.sec} — กล่องสีแดงแสดงในตาราง`);
+      const ct = course.type === "lab" ? "Lab" : "Lec";
+      const ot = conflict.type === "lab" ? "Lab" : "Lec";
+      setWarning(`⛔ ${course.code} ${ct} หมู่ ${course.sec} เวลาชนกับ ${conflict.code} ${ot} หมู่ ${conflict.sec} — เลือกได้แค่อันเดียว`);
       return;
     }
     setSelected(p => [...p, course.id]);
@@ -916,7 +1092,7 @@ export default function App() {
                     </span>
                   : jsonLoaded
                     ? <>
-                        <span style={{ marginLeft: 4 }}>· {allCourses.length.toLocaleString()} รายวิชา</span>
+                        <span style={{ marginLeft: 4 }}>· {currentCourses.length.toLocaleString()} รายวิชา{latestSemester ? ` (ภาค ${latestSemester})` : ""}</span>
                         {dataSource.updated_at && (
                           <span style={{ marginLeft: 4, color: P.textHint }}>
                             · อัพเดท {dataSource.updated_at}
@@ -1192,11 +1368,12 @@ export default function App() {
                       !selected.includes(course.id) &&
                       selectedCourses.some(c => hasConflict(c, course))
                     }
-                    isDuplicateCode={
+                    isDuplicateSection={
                       !selected.includes(course.id) &&
-                      selectedCodes.has(course.code)
+                      selectedByCodeType.has(`${course.code}|${course.type}`)
                     }
                     onToggle={toggle}
+                    filterYear={filterYear}
                   />
                 ))}
               </div>
